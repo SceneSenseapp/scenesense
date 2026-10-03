@@ -1,0 +1,37 @@
+datasource db {
+  provider = "postgres"
+  url      = env("DATABASE_URL")
+}
+
+
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String?  @unique
+  image     String?
+  bio       String?  @default("")
+  avatarUrl String?  @default("")
+  xp        Int      @default(0)
+
+  watchlist Watchlist[]
+  moods     MoodHistory[]
+}
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  userId    String
+  movieId   Int
+  title     String
+  poster    String?
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model MoodHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  mood      String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
