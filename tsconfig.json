@@ -32,6 +32,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "app/api/movie/[id]/route.js", "app/api/actor/[id]/route.js"  ],
   "exclude": ["node_modules"]
 }
