@@ -48,7 +48,7 @@ export async function GET(request) {
     const providerString = Array.from(allProviders).join(' | ');
 
     return NextResponse.json({ providers: providerString, link: primaryLink });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to fetch providers' }, { status: 500 });
   }
 }

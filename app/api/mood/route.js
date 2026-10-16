@@ -1,88 +1,89 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// app/api/mood/route.js
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/firebase";
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Fetch user's watch history context
-async function fetchUserWatchlistContext(userId) {
-  if (!userId) return "No prior watchlist on record.";
-  try {
-    const watchlistSnap = await getDocs(collection(db, 'users', userId, 'watchlist'));
-    const titles = watchlistSnap.docs.map(doc => doc.data().title);
-    if (titles.length === 0) return "User's Vault is currently empty.";
-    return `Operative's Vault Favorites: ${titles.slice(-5).join(', ')}.`;
-  } catch (error) {
-    console.error("Failed to fetch watchlist memory:", error);
-    return "Vault query offline.";
-  }
-}
 
 export async function POST(req) {
   try {
-    const { mood, userId, newMessage } = await req.json();
-    const queryText = newMessage || mood;
+    const body = await req.json();
+    const currentMessage = (body.message || body.newMessage || body.mood || "").trim();
+    const history = Array.isArray(body.history) ? body.history : [];
+    const parameters = body.parameters || {};
 
-    if (queryText?.toLowerCase().includes("mock")) {
-      return NextResponse.json({
-        profile: "Simulated operative profile engaged.",
-        recommendedTitle: "Blade Runner 2049",
-        reasoning: "Simulated Oracle transmission engaged. Visual interface is fully operational.",
-        faction: "Cyberpunk"
+    if (!currentMessage) {
+      return NextResponse.json({ error: "Query payload missing." }, { status: 400 });
+    }
+
+    // Resolve API key safely
+    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const ai = new GoogleGenAI({ apiKey });
+
+    const systemInstruction = `
+You are the AI Oracle Nexus inside SceneSense Studio—an elite, charismatic conversational cinema intelligence and film scholar.
+You engage in natural, deep discussions about movies, directors, screenplays, cast members, and backstage lore.
+
+Key Directives:
+1. Multi-turn Memory: If the user says "hello", "tell me more", or asks questions about an actor or movie, converse naturally.
+2. If the user is just saying hello or greeting you, greet them warmly in character as the Oracle Nexus and invite them into a film discussion.
+3. If the user asks for a recommendation or describes a mood, recommend ONE real movie and set "recommendedTitle" to its exact title.
+4. If it is general conversation, discuss freely and set "recommendedTitle" to null.
+
+You MUST respond strictly with a valid JSON object matching this schema:
+{
+  "profile": "A sharp 3-5 word aura tag (e.g. 'Tactical Cinephile Uplink', 'Auteur Deep Dive')",
+  "recommendedTitle": "Exact Real Movie Title or null",
+  "reasoning": "Your direct, engaging conversational response. Markdown bolding is supported.",
+  "faction": "Cinema Vanguard",
+  "compatibility": "98.5%"
+}
+`;
+
+    // Construct multi-turn contents for Gemini
+    const contents = [];
+
+    // Append prior dialogue turns
+    for (const msg of history.slice(-6)) {
+      if (!msg.content) continue;
+      contents.push({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content }]
       });
     }
-    
-    const userMemory = await fetchUserWatchlistContext(userId);
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const prompt = `
-      You are The Oracle, a highly advanced, cynical cinematic AI in a cyberpunk universe.
-      The operative's current emotional state/query: "${queryText}".
-      Their watch history memory: ${userMemory}
-      
-      Based on this state and history, recommend ONE specific movie they should watch next, create a short classified profile, and assign them a cyberpunk Faction (e.g., Noir, Cyberpunk, Auteur, Blockbuster).
-      
-      You must respond strictly in the following JSON format without any markdown blocks or extra text:
-      {
-        "profile": "1-2 sentences analyzing their psychological state.",
-        "recommendedTitle": "Exact Movie Title",
-        "reasoning": "Your badass, in-character explanation of why this fits their mood and history.",
-        "faction": "Assigned Faction Name"
+    // Append latest prompt with active telemetry parameters
+    const promptWithContext = `[Parameters: Resonance="${parameters.vibe || 'Open'}", Era="${parameters.era || 'Open'}", Tension="${parameters.intensity || 'Open'}"]\nUser: "${currentMessage}"`;
+
+    contents.push({
+      role: 'user',
+      parts: [{ text: promptWithContext }]
+    });
+
+    // Use gemini-2.5-flash (standard, fast, stable model)
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        temperature: 0.75,
       }
-    `;
+    });
 
-    let retries = 3;
-    let result;
-
-    while (retries > 0) {
-      try {
-        result = await model.generateContent(prompt);
-        break; 
-      } catch (apiError) {
-        if (apiError.status === 503 && retries > 1) {
-          await delay(2000); 
-          retries--;
-        } else {
-          throw apiError; 
-        }
-      }
-    }
-
-    const responseText = result.response.text();
+    const responseText = response.text || "{}";
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    return NextResponse.json(JSON.parse(cleanJson));
+    const parsedData = JSON.parse(cleanJson);
+
+    return NextResponse.json({
+      profile: parsedData.profile || "Neural Intel Synchronized",
+      recommendedTitle: parsedData.recommendedTitle || null,
+      reasoning: parsedData.reasoning || parsedData.text || "Oracle online and listening.",
+      faction: parsedData.faction || "Cinema Vanguard",
+      compatibility: parsedData.compatibility || "98.2%"
+    });
 
   } catch (error) {
-    console.error("Oracle Connection Failed:", error.message);
-    
-    return NextResponse.json({
-      profile: "Mainframe telemetry failure detected.",
-      recommendedTitle: "The Matrix",
-      reasoning: "The central mainframe rejected our uplink due to exhausted quota limits, but the Oracle always has a backup plan for you.",
-      faction: "Resistance"
-    });
+    console.error("LIVE ORACLE API ERROR:", error);
+    return NextResponse.json({ 
+      error: `Neural uplink failure: ${error.message}` 
+    }, { status: 500 });
   }
 }

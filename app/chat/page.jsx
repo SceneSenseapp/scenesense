@@ -1,29 +1,45 @@
+// File: app/chat/page.jsx
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, serverTimestamp, query, orderBy, limit, onSnapshot, where, updateDoc, doc, setDoc, getDocs } from 'firebase/firestore';
+import Image from 'next/image';
+import { 
+  collection, 
+  addDoc, 
+  serverTimestamp, 
+  query, 
+  orderBy, 
+  limit, 
+  onSnapshot, 
+  where, 
+  updateDoc, 
+  doc, 
+  setDoc, 
+  getDoc,
+  getDocs 
+} from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '@/firebase';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function ChatPage() {
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('channels');
   const [topics, setTopics] = useState([]);
   const [activeTopic, setActiveTopic] = useState(null);
   const [messages, setMessages] = useState([]);
   const [formValue, setFormValue] = useState('');
   
-  // Studio Token Economy & Gamification State
-  const [isVipMember, setIsVipMember] = useState(false);
+  // Gamified Community Karma & Credit Balance (TMDB Compliant)
   const [userWalletBalance, setUserWalletBalance] = useState(150);
   const [userXp, setUserXp] = useState(320);
 
-  // Modals & Advanced States
+  // Modals & Action States
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTopicTitle, setNewTopicTitle] = useState('');
   const [selectedCategories, setSelectedCategories] = useState(['General']);
-  const [isVipChannel, setIsVipChannel] = useState(false);
   
   const [showMoviePicker, setShowMoviePicker] = useState(false);
   const [screeningRoomList, setScreeningRoomList] = useState([]);
@@ -36,13 +52,6 @@ export default function ChatPage() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryText, setSummaryText] = useState(null);
 
-  const [showWhiteboard, setShowWhiteboard] = useState(false);
-  const [showFileVault, setShowFileVault] = useState(false);
-  const [vaultFiles, setVaultFiles] = useState([
-    { name: 'Scene_4_Storyboard.pdf', size: '2.4 MB', cost: 10, uploadedBy: 'Commander' },
-    { name: 'Action_Teaser_Stems.wav', size: '14.1 MB', cost: 25, uploadedBy: 'Operative #8824' }
-  ]);
-
   // Presence & Search
   const [onlineUsers, setOnlineUsers] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -50,65 +59,185 @@ export default function ChatPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const scrollRef = useRef();
+  const scrollRef = useRef(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Incoming Film Telemetry Context
+  const movieTitle = searchParams.get('title');
+  const movieYear = searchParams.get('year');
+  const movieOverview = searchParams.get('overview');
+  const movieGenres = searchParams.get('genres');
 
   const availableCategories = [
     'General', 'Actors & Cast', 'Films & Releases', 'Action', 'Adventure', 
     'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 
     'Fantasy', 'History', 'Horror', 'Music', 'Mystery', 'Romance', 
-    'Science Fiction', 'Thriller', 'War', 'Western', '👑 Directors Circle (VIP)'
+    'Science Fiction', 'Thriller', 'War', 'Western', 'Directors Circle'
   ];
 
   const availableReactions = ['🎬', '🍿', '🔥', '⭐', '💯'];
+
+  // Secure token & XP transaction helper via Next.js backend API
+  const executeTokenAction = async (payload) => {
+    if (!auth.currentUser) return null;
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/tokens', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Token transaction failed');
+        return null;
+      }
+      return data;
+    } catch (err) {
+      console.error("Token transmission error:", err);
+      alert("Failed to communicate with token ledger.");
+      return null;
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        const wlSnapshot = await getDocs(collection(db, 'users', currentUser.uid, 'watchlist'));
-        setScreeningRoomList(wlSnapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        try {
+          const userDocSnap = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDocSnap.exists()) {
+            const data = userDocSnap.data();
+            setUserWalletBalance(data.coins ?? 150);
+            setUserXp(data.xp ?? 320);
+            if (Array.isArray(data.watchlist)) {
+              setScreeningRoomList(data.watchlist);
+            }
+          }
 
-        const userPresenceRef = doc(db, 'presence', currentUser.uid);
-        await setDoc(userPresenceRef, { status: 'online', lastSeen: serverTimestamp(), displayName: currentUser.displayName || currentUser.email?.split('@')[0] });
-        
-        const interval = setInterval(async () => {
-          await setDoc(userPresenceRef, { status: 'online', lastSeen: serverTimestamp(), displayName: currentUser.displayName || currentUser.email?.split('@')[0] }, { merge: true });
-        }, 20000);
+          try {
+            const wlSnapshot = await getDocs(collection(db, 'users', currentUser.uid, 'watchlist'));
+            if (!wlSnapshot.empty) {
+              setScreeningRoomList(wlSnapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+            }
+          } catch {
+            // Handled silently
+          }
 
-        return () => clearInterval(interval);
+          const userPresenceRef = doc(db, 'presence', currentUser.uid);
+          await setDoc(userPresenceRef, { 
+            status: 'online', 
+            lastSeen: serverTimestamp(), 
+            displayName: currentUser.displayName || currentUser.email?.split('@')[0] 
+          }, { merge: true });
+
+        } catch (err) {
+          console.error("Auth profile sync error:", err);
+        }
       } else {
-        router.push('/');
+        router.push('/login');
       }
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, [router]);
 
   useEffect(() => {
+    if (!user) return;
+    const userPresenceRef = doc(db, 'presence', user.uid);
+    const interval = setInterval(async () => {
+      try {
+        await setDoc(userPresenceRef, { 
+          status: 'online', 
+          lastSeen: serverTimestamp(), 
+          displayName: user.displayName || user.email?.split('@')[0] 
+        }, { merge: true });
+      } catch (err) {
+        console.error("Heartbeat error:", err);
+      }
+    }, 25000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  useEffect(() => {
+    if (movieTitle) {
+      queueMicrotask(() => {
+        setMessages([
+          {
+            id: 'cine-context-init',
+            role: 'assistant',
+            displayName: 'CineMind AI',
+            photoURL: 'https://ui-avatars.com/api/?name=CineMind&background=0e0e18&color=06b6d4',
+            text: `CineMind telemetry locked for **${movieTitle}** (${movieYear || 'N/A'}) [${movieGenres || 'General'}]. Synopsis: "${movieOverview || 'No overview provided.'}". What tactical intel do you require—lore analysis, soundtrack stems, or streaming nodes?`,
+            createdAt: { seconds: Math.floor(Date.now() / 1000) },
+            reactions: {}
+          }
+        ]);
+      });
+    }
+  }, [movieTitle, movieYear, movieOverview, movieGenres]);
+
+  useEffect(() => {
+    if (!user) return;
     const unsubscribe = onSnapshot(collection(db, 'presence'), (snapshot) => {
       const presenceMap = {};
       snapshot.forEach(docSnap => { presenceMap[docSnap.id] = docSnap.data(); });
       setOnlineUsers(presenceMap);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    const q = query(collection(db, 'topics'), orderBy('createdAt', 'desc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTopics(data);
-      if (!activeTopic && data.length > 0) {
-        setActiveTopic(data[0]);
-      }
+    }, (error) => {
+      console.warn("Presence read permission warning:", error);
     });
     return () => unsubscribe();
   }, [user]);
 
   useEffect(() => {
-    if (!user || !activeTopic) return;
-    setSummaryText(null);
+    if (!user) return;
+    const q = query(collection(db, 'topics'), orderBy('createdAt', 'desc'), limit(100));
+    
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      if (snapshot.empty) {
+        try {
+          const defaultTopic = await addDoc(collection(db, 'topics'), {
+            title: 'general-cinema',
+            categories: ['General', 'Films & Releases'],
+            isVip: false,
+            createdBy: 'Studio Control',
+            createdAt: serverTimestamp(),
+            pinnedMessage: 'Welcome to SceneSense Lounge! Discuss films, directors, and upcoming releases here.'
+          });
+          const seedData = [{
+            id: defaultTopic.id,
+            title: 'general-cinema',
+            categories: ['General', 'Films & Releases'],
+            isVip: false
+          }];
+          setTopics(seedData);
+          setActiveTopic(seedData[0]);
+          return;
+        } catch (seedErr) {
+          console.error("Auto-seed error:", seedErr);
+        }
+      }
+
+      const data = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      setTopics(data);
+      setActiveTopic(prev => prev || data[0] || null);
+    }, (error) => {
+      console.error("Topics read error:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !activeTopic || movieTitle) return;
+
+    queueMicrotask(() => {
+      setSummaryText(null);
+    });
     
     const q = query(
       collection(db, 'messages'), 
@@ -118,29 +247,22 @@ export default function ChatPage() {
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
       setMessages(data);
       if (autoScroll) {
         setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       }
+    }, (error) => {
+      console.error("Messages read error:", error);
     });
     
     return () => unsubscribe();
-  }, [user, activeTopic, autoScroll]);
+  }, [user, activeTopic, autoScroll, movieTitle]);
 
   const getUserBadge = () => {
-    if (userXp > 500) return { label: '👑 Studio Master', color: 'bg-amber-950 text-amber-400 border-amber-800' };
-    if (userXp > 200) return { label: '🎬 Auteur', color: 'bg-red-950 text-red-400 border-red-800' };
-    return { label: '🍿 Box Office Regular', color: 'bg-slate-800 text-slate-300 border-slate-700' };
-  };
-
-  const toggleCategorySelection = (cat) => {
-    if (selectedCategories.includes(cat)) {
-      if (selectedCategories.length === 1) return;
-      setSelectedCategories(selectedCategories.filter(c => c !== cat));
-    } else {
-      setSelectedCategories([...selectedCategories, cat]);
-    }
+    if (userXp > 500) return { label: 'Studio Master', color: 'bg-amber-950 text-amber-400 border-amber-800' };
+    if (userXp > 200) return { label: 'Auteur', color: 'bg-cyan-950 text-cyan-400 border-cyan-800' };
+    return { label: 'Box Office Regular', color: 'bg-slate-800 text-slate-300 border-slate-700' };
   };
 
   const handleCreateTopic = async (e) => {
@@ -149,9 +271,9 @@ export default function ChatPage() {
 
     try {
       const docRef = await addDoc(collection(db, 'topics'), {
-        title: newTopicTitle.trim(),
+        title: newTopicTitle.trim().toLowerCase().replace(/\s+/g, '-'),
         categories: selectedCategories,
-        isVip: isVipChannel,
+        isVip: false,
         createdBy: user.displayName || user.email?.split('@')[0] || "Operative",
         createdAt: serverTimestamp(),
         pinnedMessage: null
@@ -159,30 +281,94 @@ export default function ChatPage() {
 
       setActiveTopic({
         id: docRef.id,
-        title: newTopicTitle.trim(),
+        title: newTopicTitle.trim().toLowerCase().replace(/\s+/g, '-'),
         categories: selectedCategories,
-        isVip: isVipChannel,
+        isVip: false,
         pinnedMessage: null
       });
 
       setNewTopicTitle('');
       setSelectedCategories(['General']);
-      setIsVipChannel(false);
       setShowCreateModal(false);
-      setUserXp(prev => prev + 50);
+
+      const reward = await executeTokenAction({ action: 'reward', amount: 10, xpGain: 50 });
+      if (reward) {
+        setUserWalletBalance(reward.coins);
+        setUserXp(reward.xp);
+      }
     } catch (error) {
       console.error("Failed to create topic:", error);
     }
   };
 
+  const handleEarnCredits = async () => {
+    const result = await executeTokenAction({ action: 'reward', amount: 25, xpGain: 50 });
+    if (result) {
+      setUserWalletBalance(result.coins);
+      setUserXp(result.xp);
+      alert("Earned 25 Community Credits for contributing to the studio discussion! 🍿");
+    }
+  };
+
   const sendMessage = async (payload = {}) => {
-    if ((!formValue.trim() && !payload.movieCard && !payload.audioUrl && !payload.poll && !payload.screening) || !user || !activeTopic || isSubmitting) return;
+    if ((!formValue.trim() && !payload.movieCard && !payload.poll && !payload.screening) || !user || isSubmitting) return;
     
     const { uid, photoURL, displayName, email } = user;
     const messageText = formValue.trim();
     setFormValue('');
     setIsSubmitting(true);
-    setUserXp(prev => prev + 15);
+
+    executeTokenAction({ action: 'reward', amount: 0, xpGain: 15 }).then((res) => {
+      if (res) setUserXp(res.xp);
+    });
+
+    if (movieTitle && !activeTopic) {
+      const userMsg = {
+        id: `user-${Date.now()}`,
+        uid,
+        displayName: displayName || email?.split('@')[0] || "Operative",
+        photoURL,
+        text: messageText,
+        createdAt: { seconds: Math.floor(Date.now() / 1000) }
+      };
+      setMessages(prev => [...prev, userMsg]);
+
+      try {
+        const aiRes = await fetch('/api/oracle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: `Context film: ${movieTitle} (${movieYear || ''}). Overview: ${movieOverview || ''}. User question: ${messageText}`
+          })
+        });
+        const aiData = await aiRes.json();
+        const replyText = aiData?.answer || aiData?.text || `Signal intercepted: Analysis indicates ${movieTitle} connects across deep cinematic nodes.`;
+
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            displayName: 'CineMind AI',
+            photoURL: 'https://ui-avatars.com/api/?name=CineMind&background=0e0e18&color=06b6d4',
+            text: replyText,
+            createdAt: { seconds: Math.floor(Date.now() / 1000) },
+            reactions: {}
+          }
+        ]);
+      } catch (err) {
+        console.error("CineMind error:", err);
+      } finally {
+        setIsSubmitting(false);
+        setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      }
+      return;
+    }
+
+    if (!activeTopic) {
+      setIsSubmitting(false);
+      return;
+    }
 
     let linkPreview = null;
     const urlMatch = messageText.match(/(https?:\/\/[^\s]+)/g);
@@ -196,7 +382,7 @@ export default function ChatPage() {
         const json = await res.json();
         if (json.success) linkPreview = json.metadata;
       } catch (err) {
-        console.error("Link preview failed:", err);
+        console.error("Link preview error:", err);
       }
     }
 
@@ -210,14 +396,13 @@ export default function ChatPage() {
         displayName: displayName || email?.split('@')[0] || "Operative",
         reactions: {},
         movieCard: payload.movieCard || null,
-        audioUrl: payload.audioUrl || null,
         poll: payload.poll || null,
         screening: payload.screening || null,
         linkPreview
       });
       setAutoScroll(true);
     } catch (error) {
-      console.error("Transmission dropped:", error);
+      console.error("Transmission error:", error);
     } finally {
       setIsSubmitting(false);
       setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
@@ -225,44 +410,78 @@ export default function ChatPage() {
   };
 
   const handleSendTip = async (recipientUid, recipientName) => {
-    if (userWalletBalance < 10) {
-      alert("Insufficient Studio Tokens. Top up your balance.");
-      return;
-    }
-    setUserWalletBalance(prev => prev - 10);
-    alert(`Successfully sent 10 Studio Tokens tip to ${recipientName}! 🎬🪙`);
+    const result = await executeTokenAction({ action: 'tip', amount: 10, recipientUid });
+    if (!result) return;
+
+    setUserWalletBalance(result.coins);
+    alert(`Successfully awarded 10 Community Tokens to ${recipientName}! 🎬🪙`);
   };
 
-  // Token-Gated Script Doctor Execution (Costs 5 Tokens)
+  // Live Script Doctor AI diagnostic
   const handleScriptDoctor = async () => {
-    if (userWalletBalance < 5) {
-      alert("Insufficient Studio Tokens. Script Doctor query requires 5 tokens.");
+    if (messages.length === 0) {
+      alert("No transmission history found to analyze in this channel.");
       return;
     }
-    setUserWalletBalance(prev => prev - 5);
-    setSummaryText("🤖 @ScriptDoctor analyzing dialogue and pacing (Cost: 5 Tokens)...");
-    setTimeout(() => {
-      setSummaryText("🤖 @ScriptDoctor Recommendations:\n• Verse 2 pacing is strong; add a dramatic pause before the climax drop.\n• Dialogue conflict in current thread can be heightened with sharper tension.");
-    }, 1200);
-  };
 
-  const handleDirectorBotSummary = async () => {
-    if (messages.length === 0 || isSummarizing) return;
+    const tokenRes = await executeTokenAction({ action: 'deduct', amount: 5 });
+    if (!tokenRes) return;
+    setUserWalletBalance(tokenRes.coins);
+
     setIsSummarizing(true);
-    setSummaryText("DirectorBot analyzing transmission thread...");
+    setSummaryText("🤖 @ScriptDoctor is analyzing channel dialogue and thematic trajectory (Cost: 5 Credits)...");
 
     try {
-      const threadText = messages.map(m => `${m.displayName}: ${m.text || '[Attachment]'}`).join('\n');
+      const threadText = messages
+        .filter(m => m.text)
+        .slice(-15)
+        .map(m => `${m.displayName}: ${m.text}`)
+        .join('\n');
+
       const res = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threadText })
+        body: JSON.stringify({ threadText, type: 'script_doctor' })
       });
       const json = await res.json();
-      if (json.success) setSummaryText(json.summary);
-      else setSummaryText("DirectorBot error: " + (json.error || 'Unknown'));
-    } catch (err) {
-      setSummaryText("DirectorBot transmission failed.");
+      if (json.success) {
+        setSummaryText(`🩺 Script Doctor Recommendations:\n${json.summary}`);
+      } else {
+        setSummaryText(`Script Doctor error: ${json.error || 'Diagnostic failed.'}`);
+      }
+    } catch {
+      setSummaryText("Script Doctor transmission failed. Check connection to neural core.");
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  // Live DirectorBot Thread Summary
+  const handleDirectorBotSummary = async () => {
+    if (messages.length === 0 || isSummarizing) return;
+    setIsSummarizing(true);
+    setSummaryText("🎬 DirectorBot is compiling transmission briefing...");
+
+    try {
+      const threadText = messages
+        .filter(m => m.text)
+        .slice(-15)
+        .map(m => `${m.displayName}: ${m.text}`)
+        .join('\n');
+
+      const res = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadText, type: 'summary' })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSummaryText(`🎬 DirectorBot Briefing Summary:\n${json.summary}`);
+      } else {
+        setSummaryText(`DirectorBot error: ${json.error || 'Failed to generate summary.'}`);
+      }
+    } catch {
+      setSummaryText("DirectorBot transmission failed. Check connection to neural core.");
     } finally {
       setIsSummarizing(false);
     }
@@ -285,7 +504,8 @@ export default function ChatPage() {
       await updateDoc(msgRef, {
         poll: { ...pollData, votes: updatedVotes, optionsCount: newOptionsCount }
       });
-      setUserXp(prev => prev + 25);
+      const reward = await executeTokenAction({ action: 'reward', amount: 0, xpGain: 25 });
+      if (reward) setUserXp(reward.xp);
     } catch (err) {
       console.error("Vote failed:", err);
     }
@@ -334,74 +554,95 @@ export default function ChatPage() {
 
   const activeParticipantsCount = new Set(messages.map(m => m.uid)).size;
 
-  if (!user) return null;
+  if (authLoading || !user) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#050508] text-cyan-400 font-mono text-sm">
+        Establishing Secure Studio Connection...
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen w-full bg-[#090a0f] text-slate-100 font-sans overflow-hidden">
+    <div className="flex h-[calc(100vh-64px)] w-full bg-[#050508] text-slate-100 font-sans overflow-hidden selection:bg-cyan-500/30">
       
       {/* SIDEBAR */}
-      <aside className="w-80 bg-[#0d0f17] border-r border-slate-800/60 flex flex-col h-full flex-shrink-0">
+      <aside className={`
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        fixed md:relative z-40 w-80 bg-[#08080f] border-r border-cyan-500/20 flex flex-col h-full flex-shrink-0 transition-transform duration-300
+      `}>
         
-        <div className="p-5 border-b border-slate-800/60 flex items-center justify-between">
+        <div className="p-4 border-b border-cyan-500/20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-500 font-bold">
+            <div className="w-8 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-bold">
               🎬
             </div>
             <div>
               <h1 className="text-sm font-bold tracking-tight text-white">SceneSense Lounge</h1>
-              <p className="text-[10px] text-slate-400 font-medium">Token Economy Suite v5.2</p>
+              <p className="text-[10px] text-cyan-400 font-mono">Community Studio Suite</p>
             </div>
           </div>
+          <button 
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="md:hidden text-slate-400 hover:text-white"
+          >
+            ✕
+          </button>
         </div>
 
-        {/* Token Wallet & XP Bar */}
-        <div className="p-4 bg-gradient-to-r from-red-950/40 to-[#141721] border-b border-slate-800/60 flex flex-col gap-2">
+        {/* Community Karma & Credit Balance (TMDB Compliant) */}
+        <div className="p-4 bg-gradient-to-r from-cyan-950/40 to-[#0e0e18] border-b border-cyan-500/20 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-amber-400">🪙</span>
+              <span className="text-cyan-400">🪙</span>
               <div>
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">Studio Tokens</span>
-                <span className="text-xs font-bold text-white font-mono">{userWalletBalance} TOKENS</span>
+                <span className="text-[9px] uppercase font-mono text-slate-400 block">Studio Credits</span>
+                <span className="text-xs font-bold text-white font-mono">{userWalletBalance} CREDITS</span>
               </div>
             </div>
             <button 
-              onClick={() => { setUserWalletBalance(prev => prev + 50); setUserXp(prev => prev + 100); alert("Successfully topped up 50 tokens (+100 XP)!"); }}
-              className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer shadow-sm"
+              type="button"
+              onClick={handleEarnCredits}
+              className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer shadow-sm"
+              title="Earn free credits through activity"
             >
-              + Top Up
+              + Earn Credits
             </button>
           </div>
-          <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+          <div className="flex items-center justify-between pt-1 border-t border-cyan-500/20">
             <span className="text-[10px] text-slate-400 font-mono">Studio XP: <strong className="text-white">{userXp} XP</strong></span>
-            <span className="text-[9px] bg-red-950 border border-red-800 text-red-300 px-2 py-0.5 rounded font-mono">{getUserBadge().label}</span>
+            <span className="text-[9px] bg-cyan-950 border border-cyan-800 text-cyan-300 px-2 py-0.5 rounded font-mono">{getUserBadge().label}</span>
           </div>
         </div>
 
         <div className="px-4 pt-3 flex gap-2">
           <button 
+            type="button"
             onClick={() => setActiveTab('channels')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-              activeTab === 'channels' ? 'bg-red-600 text-white shadow-sm' : 'bg-[#141721] text-slate-400 hover:text-white'
+              activeTab === 'channels' ? 'bg-cyan-600 text-white shadow-sm' : 'bg-[#0e0e18] text-slate-400 hover:text-white'
             }`}
           >
             Channels
           </button>
           <button 
+            type="button"
             onClick={() => setActiveTab('dms')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-              activeTab === 'dms' ? 'bg-red-600 text-white shadow-sm' : 'bg-[#141721] text-slate-400 hover:text-white'
+              activeTab === 'dms' ? 'bg-cyan-600 text-white shadow-sm' : 'bg-[#0e0e18] text-slate-400 hover:text-white'
             }`}
           >
-            Vault & Network
+            Operative Network
           </button>
         </div>
 
         {activeTab === 'channels' ? (
           <>
-            <div className="p-4 border-b border-slate-800/40 flex flex-col gap-3">
+            <div className="p-4 border-b border-cyan-500/20 flex flex-col gap-3">
               <button 
+                type="button"
                 onClick={() => setShowCreateModal(true)}
-                className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>+</span> Create New Topic
               </button>
@@ -411,13 +652,13 @@ export default function ChatPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search channels..."
-                className="w-full bg-[#141721] border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-red-500 transition-colors"
+                className="w-full bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors"
               />
 
               <select 
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="w-full bg-[#141721] border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-red-500 transition-colors"
+                className="w-full bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
               >
                 <option value="All">All Categories ({topics.length})</option>
                 {availableCategories.map(cat => (
@@ -433,34 +674,30 @@ export default function ChatPage() {
 
               {filteredTopics.map((topic) => {
                 const isActive = activeTopic?.id === topic.id;
-                const isVipLocked = topic.isVip && !isVipMember;
 
                 return (
                   <button
                     key={topic.id}
+                    type="button"
                     onClick={() => {
-                      if (isVipLocked) {
-                        alert("🔒 This is a VIP Directors Circle channel. Upgrade your pass to access.");
-                        return;
-                      }
                       setActiveTopic(topic);
                       setAutoScroll(true);
+                      setSidebarOpen(false);
                     }}
                     className={`w-full text-left p-3 rounded-xl transition-all cursor-pointer flex flex-col gap-2 ${
                       isActive 
-                        ? 'bg-red-600/15 border border-red-500/30 text-white shadow-sm' 
-                        : 'hover:bg-slate-800/40 border border-transparent text-slate-300'
+                        ? 'bg-cyan-600/15 border border-cyan-500/40 text-white shadow-sm' 
+                        : 'hover:bg-cyan-500/10 border border-transparent text-slate-300'
                     }`}
                   >
                     <div className="flex items-center justify-between w-full">
                       <span className="text-xs font-medium truncate flex items-center gap-1.5">
-                        {topic.isVip && <span>👑</span>} # {topic.title}
+                        # {topic.title}
                       </span>
-                      {isVipLocked && <span className="text-[10px]">🔒</span>}
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {topic.categories?.slice(0, 2).map((c, i) => (
-                        <span key={i} className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                        <span key={i} className="text-[9px] bg-[#0e0e18] text-cyan-400 border border-cyan-500/20 px-1.5 py-0.5 rounded font-mono">
                           {c}
                         </span>
                       ))}
@@ -471,50 +708,24 @@ export default function ChatPage() {
             </div>
           </>
         ) : (
-          <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
-            <div>
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Secure Operative Network</div>
-              {Object.entries(onlineUsers).map(([uid, presence]) => (
-                <div key={uid} className="p-3 bg-[#141721] border border-slate-800 rounded-xl text-xs text-slate-300 flex items-center justify-between mb-1.5">
-                  <span>{presence.displayName || 'Operative'}</span>
-                  <span className={`w-2 h-2 rounded-full ${presence.status === 'online' ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
-                </div>
-              ))}
+          <div className="flex-1 p-4 flex flex-col gap-3 overflow-y-auto">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Active Operatives Online
             </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Licensed File Vault</span>
-                <button onClick={() => setShowFileVault(true)} className="text-[10px] text-red-400 hover:underline cursor-pointer">+ Open Vault</button>
+            {Object.entries(onlineUsers).map(([uid, presence]) => (
+              <div key={uid} className="p-3 bg-[#0e0e18] border border-cyan-500/20 rounded-xl text-xs text-slate-300 flex items-center justify-between">
+                <span>{presence.displayName || 'Operative'}</span>
+                <span className={`w-2 h-2 rounded-full ${presence.status === 'online' ? 'bg-cyan-400' : 'bg-slate-600'}`}></span>
               </div>
-              <div className="p-3 bg-[#141721] border border-slate-800 rounded-xl text-xs text-slate-300 flex flex-col gap-1">
-                <span className="font-bold text-white">Scene_4_Storyboard.pdf</span>
-                <span className="text-[10px] text-slate-400">2.4 MB • 10 Tokens License</span>
-              </div>
-            </div>
+            ))}
           </div>
         )}
 
-        {!isVipMember && (
-          <div className="p-4 bg-gradient-to-r from-red-900/40 to-amber-950/40 border-t border-slate-800/60 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-white">👑 Directors Circle VIP</span>
-              <span className="text-[9px] bg-red-600 text-white px-1.5 py-0.5 rounded font-mono">PRO</span>
-            </div>
-            <p className="text-[10px] text-slate-400">Unlock masterclasses, spatial audio rooms, and VIP channels.</p>
-            <button 
-              onClick={() => { setIsVipMember(true); setUserXp(prev => prev + 250); alert("🎉 Welcome to VIP! Unlocked all channels (+250 XP)."); }}
-              className="w-full py-2 bg-gradient-to-r from-red-600 to-amber-600 text-white font-bold text-[10px] rounded-lg shadow-md cursor-pointer hover:opacity-90 transition-opacity"
-            >
-              Upgrade Pass ($9.99/mo)
-            </button>
-          </div>
-        )}
-
-        <div className="p-4 border-t border-slate-800/60">
+        <div className="p-4 border-t border-cyan-500/20">
           <button 
+            type="button"
             onClick={() => router.push('/')}
-            className="w-full text-xs text-slate-400 hover:text-white transition-colors py-2 px-3 rounded-lg hover:bg-slate-800/40 flex items-center gap-2 cursor-pointer"
+            className="w-full text-xs text-slate-400 hover:text-white transition-colors py-2 px-3 rounded-lg hover:bg-cyan-500/10 flex items-center gap-2 cursor-pointer"
           >
             <span>←</span> Return to Studio Control
           </button>
@@ -522,69 +733,55 @@ export default function ChatPage() {
 
       </aside>
 
-      {/* MAIN CHAT AREA */}
-      <main className="flex-1 flex flex-col h-full bg-[#090a0f] relative overflow-hidden">
+      {/* MAIN CHAT CONSOLE: FIXED VIEWPORT, NO SCROLLING DOWN TO INPUT */}
+      <main className="flex-1 flex flex-col h-full bg-[#050508] relative overflow-hidden min-w-0">
         
-        {/* Sponsored Banner */}
-        <div className="bg-gradient-to-r from-red-950/80 via-zinc-900 to-red-950/80 border-b border-red-900/40 px-6 py-2 flex items-center justify-between text-xs flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="bg-red-600 text-white text-[9px] font-mono px-1.5 py-0.5 rounded font-bold uppercase">Sponsored</span>
-            <span className="text-slate-300 font-medium">🎬 Get 20% off professional thermal stencil printers & tattoo studio gear at <a href="#" className="text-red-400 underline font-semibold">TattooSupplyPro.com</a></span>
-          </div>
-          <span className="text-[10px] text-slate-500 font-mono">Ad</span>
-        </div>
-
-        <header className="h-16 px-6 border-b border-slate-800/60 bg-[#0d0f17]/50 backdrop-blur-md flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <div>
-              <h2 className="text-sm font-bold text-white tracking-tight flex items-center gap-1.5">
-                {activeTopic?.isVip && <span>👑</span>}
-                {activeTopic ? `# ${activeTopic.title}` : 'Select a Channel'}
+        {/* HEADER BAR */}
+        <header className="h-16 px-4 md:px-6 border-b border-cyan-500/20 bg-[#08080f]/80 backdrop-blur-md flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-2 rounded-lg bg-[#0e0e18] border border-cyan-500/30 text-cyan-400"
+            >
+              ☰
+            </button>
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-white tracking-tight truncate">
+                {movieTitle ? `CineMind Briefing: ${movieTitle}` : (activeTopic ? `# ${activeTopic.title}` : 'Select a Channel')}
               </h2>
               {activeTopic && (
                 <p className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
                   {activeParticipantsCount} Operatives Active in Channel
                 </p>
               )}
             </div>
-            <div className="h-4 w-[1px] bg-slate-800"></div>
-            <div className="flex flex-wrap gap-1.5">
-              {activeTopic?.categories?.map((cat, i) => (
-                <span key={i} className="text-[10px] bg-red-950/40 border border-red-900/30 text-red-400 px-2 py-0.5 rounded-md font-mono">
-                  {cat}
-                </span>
-              ))}
-            </div>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button 
-              onClick={() => setShowWhiteboard(true)}
-              className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-slate-200 text-xs font-semibold rounded-lg transition-all cursor-pointer border border-slate-700"
-            >
-              🎨 Whiteboard
-            </button>
-
-            <button 
+              type="button"
               onClick={handleScriptDoctor}
-              className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-slate-200 text-xs font-semibold rounded-lg transition-all cursor-pointer border border-slate-700"
-              title="AI Script Doctor (Cost: 5 Tokens)"
+              className="px-2.5 py-1.5 bg-[#0e0e18] hover:bg-cyan-500/20 text-slate-200 text-xs font-semibold rounded-lg transition-all cursor-pointer border border-cyan-500/20"
+              title="AI Script Doctor (5 Credits)"
             >
-              🩺 @ScriptDoctor <span className="text-[9px] text-amber-400 font-mono">(5 🪙)</span>
+              🩺 Script Doctor <span className="text-[9px] text-amber-400 font-mono">(5 🪙)</span>
             </button>
 
             <button 
+              type="button"
               onClick={handleDirectorBotSummary}
               disabled={isSummarizing || messages.length === 0}
-              className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-slate-200 text-xs font-semibold rounded-lg transition-all cursor-pointer border border-slate-700"
+              className="hidden sm:block px-2.5 py-1.5 bg-[#0e0e18] hover:bg-cyan-500/20 disabled:opacity-50 text-slate-200 text-xs font-semibold rounded-lg transition-all cursor-pointer border border-cyan-500/20"
             >
               🤖 DirectorBot
             </button>
 
             <button 
+              type="button"
               onClick={() => setShowWatchParty(true)}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
             >
               <span>🍿</span> Watch Party
             </button>
@@ -592,29 +789,30 @@ export default function ChatPage() {
         </header>
 
         {summaryText && (
-          <div className="bg-zinc-900 border-b border-slate-800 p-4 text-xs text-slate-300 flex flex-col gap-2 flex-shrink-0 relative">
+          <div className="bg-[#0b0b14] border-b border-cyan-500/20 p-4 text-xs text-slate-300 flex flex-col gap-2 shrink-0 relative">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-red-400 uppercase tracking-wider font-mono text-[10px]">🤖 Studio AI Brief</span>
-              <button onClick={() => setSummaryText(null)} className="text-slate-500 hover:text-white cursor-pointer">✕</button>
+              <span className="font-bold text-cyan-400 uppercase tracking-wider font-mono text-[10px]">🤖 Studio AI Brief</span>
+              <button type="button" onClick={() => setSummaryText(null)} className="text-slate-500 hover:text-white cursor-pointer">✕</button>
             </div>
             <p className="whitespace-pre-line leading-relaxed">{summaryText}</p>
           </div>
         )}
 
+        {/* MESSAGES CONTAINER: ONLY THIS CONTAINER SCROLLS */}
         <div 
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
             setAutoScroll(scrollHeight - scrollTop - clientHeight < 80);
           }}
-          className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 scrollbar-thin scrollbar-thumb-slate-800"
+          className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col gap-6 scrollbar-thin scrollbar-thumb-slate-800"
         >
-          {!activeTopic && (
+          {!activeTopic && !movieTitle && (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
               <p className="text-sm font-medium">No channel selected.</p>
             </div>
           )}
 
-          {activeTopic && messages.length === 0 && (
+          {activeTopic && messages.length === 0 && !movieTitle && (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
               <p className="text-sm font-medium">This channel is pristine.</p>
               <p className="text-xs text-slate-600 mt-1">Send the first transmission below.</p>
@@ -623,28 +821,36 @@ export default function ChatPage() {
 
           {messages.map((msg, index) => {
             const isMe = msg.uid === user.uid;
+            const isAi = msg.role === 'assistant' || msg.displayName === 'CineMind AI';
             const reactions = msg.reactions || {};
 
             return (
               <div key={msg.id || index} className={`group flex items-start gap-3.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                <img 
-                  src={msg.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.displayName || 'User')}&background=1e293b&color=fff`} 
-                  alt="avatar" 
-                  className="w-9 h-9 rounded-full object-cover flex-shrink-0 border border-slate-700/60 shadow-sm"
-                  referrerPolicy="no-referrer"
-                />
+                <div className="relative w-9 h-9 rounded-full overflow-hidden shrink-0 border border-cyan-500/30 shadow-sm">
+                  <Image 
+                    src={msg.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.displayName || 'User')}&background=0e0e18&color=06b6d4`} 
+                    alt="avatar" 
+                    fill
+                    unoptimized
+                    sizes="36px"
+                    className="object-cover"
+                  />
+                </div>
                 
-                <div className={`flex flex-col max-w-[70%] relative ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col max-w-[85%] md:max-w-[70%] relative ${isMe ? 'items-end' : 'items-start'}`}>
                   <div className="flex items-center gap-2 mb-1 px-1">
-                    <span className="text-xs font-semibold text-slate-300">{msg.displayName}</span>
+                    <span className={`text-xs font-semibold ${isAi ? 'text-cyan-400 font-mono' : 'text-slate-300'}`}>
+                      {msg.displayName}
+                    </span>
                     
-                    {!isMe && (
+                    {!isMe && !isAi && msg.uid !== 'cine-context-init' && (
                       <button 
+                        type="button"
                         onClick={() => handleSendTip(msg.uid, msg.displayName)}
-                        className="text-[9px] bg-amber-950/60 hover:bg-amber-900 border border-amber-800/80 text-amber-300 px-2 py-0.5 rounded-full font-mono flex items-center gap-1 cursor-pointer transition-colors"
-                        title="Send 10 Studio Tokens Tip"
+                        className="text-[9px] bg-cyan-950/60 hover:bg-cyan-900 border border-cyan-800/80 text-cyan-300 px-2 py-0.5 rounded-full font-mono flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Award 10 Community Credits"
                       >
-                        <span>🪙 Tip (10)</span>
+                        <span>🪙 Award (10)</span>
                       </button>
                     )}
 
@@ -656,23 +862,31 @@ export default function ChatPage() {
                   <div className="relative group/bubble flex flex-col gap-2">
                     {msg.text && (
                       <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                        isMe ? 'bg-red-600 text-white rounded-tr-none' : 'bg-[#141721] border border-slate-800 text-slate-200 rounded-tl-none'
+                        isMe 
+                          ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-tr-none' 
+                          : isAi 
+                          ? 'bg-[#0a0e17] border border-cyan-500/40 text-cyan-100 rounded-tl-none shadow-[0_0_15px_rgba(6,182,212,0.1)]'
+                          : 'bg-[#0e0e18] border border-cyan-500/20 text-slate-200 rounded-tl-none'
                       }`}>
                         {renderFormattedText(msg.text)}
                       </div>
                     )}
 
                     {msg.screening && (
-                      <div className="p-4 bg-gradient-to-br from-red-950/60 to-zinc-900 border border-red-900/50 rounded-2xl shadow-lg max-w-sm w-full flex flex-col gap-2">
-                        <span className="text-[9px] font-mono text-red-400 uppercase tracking-widest font-bold">📅 Scheduled Screening Event</span>
+                      <div className="p-4 bg-gradient-to-br from-cyan-950/60 to-[#0a0a14] border border-cyan-500/40 rounded-2xl shadow-lg max-w-sm w-full flex flex-col gap-2">
+                        <span className="text-[9px] font-mono text-cyan-400 uppercase tracking-widest font-bold">📅 Scheduled Screening Event</span>
                         <h4 className="text-sm font-bold text-white">{msg.screening.title}</h4>
                         <p className="text-xs text-slate-300 font-mono">Time: {msg.screening.time}</p>
                       </div>
                     )}
 
                     {msg.linkPreview && (
-                      <a href={msg.linkPreview.url} target="_blank" rel="noopener noreferrer" className="flex flex-col bg-[#141721] border border-slate-700 rounded-xl overflow-hidden max-w-sm hover:border-slate-500 transition-all">
-                        {msg.linkPreview.image && <img src={msg.linkPreview.image} alt="Preview" className="w-full h-32 object-cover" />}
+                      <a href={msg.linkPreview.url} target="_blank" rel="noopener noreferrer" className="flex flex-col bg-[#0e0e18] border border-cyan-500/20 rounded-xl overflow-hidden max-w-sm hover:border-cyan-400 transition-all">
+                        {msg.linkPreview.image && (
+                          <div className="relative w-full h-32">
+                            <Image src={msg.linkPreview.image} alt="Preview" fill unoptimized className="object-cover" />
+                          </div>
+                        )}
                         <div className="p-3 flex flex-col gap-1">
                           <h4 className="text-xs font-bold text-white truncate">{msg.linkPreview.title}</h4>
                           <p className="text-[10px] text-slate-400 line-clamp-2">{msg.linkPreview.description}</p>
@@ -682,7 +896,7 @@ export default function ChatPage() {
                     )}
 
                     {msg.poll && (
-                      <div className="p-4 bg-[#141721] border border-slate-700 rounded-2xl shadow-lg max-w-sm w-full flex flex-col gap-3">
+                      <div className="p-4 bg-[#0e0e18] border border-cyan-500/20 rounded-2xl shadow-lg max-w-sm w-full flex flex-col gap-3">
                         <h4 className="text-xs font-bold text-white uppercase tracking-wide">📊 {msg.poll.question}</h4>
                         <div className="flex flex-col gap-2">
                           {msg.poll.options.map((opt, optIdx) => {
@@ -694,12 +908,13 @@ export default function ChatPage() {
                             return (
                               <button
                                 key={optIdx}
+                                type="button"
                                 onClick={() => handleVotePoll(msg.id, msg.poll, optIdx)}
                                 className={`w-full text-left p-2.5 rounded-xl border transition-all relative overflow-hidden cursor-pointer ${
-                                  hasVotedThis ? 'border-red-500 bg-red-950/30' : 'border-slate-800 bg-slate-900/50 hover:bg-slate-900'
+                                  hasVotedThis ? 'border-cyan-400 bg-cyan-950/30' : 'border-cyan-500/10 bg-[#0b0b14] hover:bg-cyan-500/10'
                                 }`}
                               >
-                                <div className="absolute inset-0 bg-red-600/10 transition-all" style={{ width: `${percentage}%` }}></div>
+                                <div className="absolute inset-0 bg-cyan-600/20 transition-all" style={{ width: `${percentage}%` }}></div>
                                 <div className="relative flex items-center justify-between text-xs font-medium text-slate-200">
                                   <span>{opt}</span>
                                   <span className="font-mono text-[10px]">{percentage}% ({count})</span>
@@ -712,32 +927,35 @@ export default function ChatPage() {
                     )}
 
                     {msg.movieCard && (
-                      <div className="flex flex-col gap-3 p-3 bg-[#10131d] border border-slate-700 rounded-xl shadow-lg max-w-sm">
+                      <div className="flex flex-col gap-3 p-3 bg-[#0b0b14] border border-cyan-500/20 rounded-xl shadow-lg max-w-sm">
                         <div className="flex gap-3">
                           {msg.movieCard.poster_path && (
-                            <img src={msg.movieCard.poster_path} alt={msg.movieCard.title} className="w-12 h-16 object-cover rounded-lg border border-slate-700" />
+                            <div className="relative w-12 h-16 rounded-lg overflow-hidden border border-cyan-500/20 shrink-0">
+                              <Image src={msg.movieCard.poster_path} alt={msg.movieCard.title} fill unoptimized sizes="48px" className="object-cover" />
+                            </div>
                           )}
                           <div className="flex flex-col justify-center">
-                            <span className="text-[9px] uppercase font-mono tracking-wider text-red-400 font-bold">Secured Film Target</span>
+                            <span className="text-[9px] uppercase font-mono tracking-wider text-cyan-400 font-bold">Secured Film Target</span>
                             <h4 className="text-xs font-bold text-white">{msg.movieCard.title}</h4>
                             <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{msg.movieCard.overview}</p>
                           </div>
                         </div>
                         <a 
-                          href={`https://www.amazon.com/s?k=${encodeURIComponent(msg.movieCard.title + ' blu-ray soundtrack')}¤t=affiliate`} 
+                          href={`https://www.google.com/search?q=${encodeURIComponent(msg.movieCard.title + ' physical media soundtrack')}`} 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          className="w-full py-1.5 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 text-[10px] font-bold rounded-lg text-center transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          className="w-full py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded-lg text-center transition-all cursor-pointer flex items-center justify-center gap-1.5"
                         >
-                          <span>🛒</span> Buy Blu-Ray / Soundtrack (Affiliate)
+                          <span>🔍</span> Search Physical Media &amp; Soundtrack
                         </a>
                       </div>
                     )}
 
-                    <div className={`absolute -top-3 ${isMe ? 'left-2' : 'right-2'} hidden group-hover/bubble:flex items-center gap-1 bg-[#1a1e29] border border-slate-700 rounded-lg p-1 shadow-md z-10`}>
+                    <div className={`absolute -top-3 ${isMe ? 'left-2' : 'right-2'} hidden group-hover/bubble:flex items-center gap-1 bg-[#10101c] border border-cyan-500/30 rounded-lg p-1 shadow-md z-10`}>
                       {availableReactions.map(emoji => (
                         <button 
                           key={emoji}
+                          type="button"
                           onClick={() => toggleReaction(msg.id, emoji, reactions)}
                           className="text-xs px-1 hover:scale-125 transition-transform cursor-pointer"
                         >
@@ -754,9 +972,10 @@ export default function ChatPage() {
                         return (
                           <button
                             key={emoji}
+                            type="button"
                             onClick={() => toggleReaction(msg.id, emoji, reactions)}
                             className={`text-xs px-2 py-0.5 rounded-full border flex items-center gap-1 cursor-pointer transition-colors ${
-                              hasReacted ? 'bg-red-950/60 border-red-800 text-red-300' : 'bg-[#141721] border-slate-800 text-slate-400'
+                              hasReacted ? 'bg-cyan-950/60 border-cyan-500 text-cyan-300' : 'bg-[#0e0e18] border-cyan-500/20 text-slate-400'
                             }`}
                           >
                             <span>{emoji}</span>
@@ -776,20 +995,22 @@ export default function ChatPage() {
 
         {!autoScroll && (
           <button 
+            type="button"
             onClick={() => { setAutoScroll(true); scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }}
-            className="absolute bottom-24 right-8 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-4 py-2 rounded-full shadow-lg border border-slate-700 transition-all cursor-pointer flex items-center gap-2"
+            className="absolute bottom-24 right-8 bg-[#0e0e18] hover:bg-cyan-500/20 text-cyan-300 text-xs font-medium px-4 py-2 rounded-full shadow-lg border border-cyan-500/30 transition-all cursor-pointer flex items-center gap-2 z-20"
           >
             <span>↓</span> New messages below
           </button>
         )}
 
-        <div className="p-6 border-t border-slate-800/60 bg-[#0d0f17]/30 backdrop-blur-md">
-          <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-3 items-center">
+        {/* PINNED BOTTOM INPUT BAR - ALWAYS VISIBLE */}
+        <div className="p-4 border-t border-cyan-500/20 bg-[#08080f] shrink-0">
+          <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2 md:gap-3 items-center">
             
             <button 
               type="button"
               onClick={() => setShowMoviePicker(true)}
-              className="p-3 bg-[#141721] hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-xl transition-all cursor-pointer text-xs"
+              className="p-3 bg-[#0e0e18] hover:bg-cyan-500/20 border border-cyan-500/20 text-slate-300 rounded-xl transition-all cursor-pointer text-xs"
               title="Attach Movie from Screening Room"
             >
               🎞
@@ -798,7 +1019,7 @@ export default function ChatPage() {
             <button 
               type="button"
               onClick={() => setShowPollModal(true)}
-              className="p-3 bg-[#141721] hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-xl transition-all cursor-pointer text-xs"
+              className="p-3 bg-[#0e0e18] hover:bg-cyan-500/20 border border-cyan-500/20 text-slate-300 rounded-xl transition-all cursor-pointer text-xs"
               title="Create Poll"
             >
               📊
@@ -808,15 +1029,15 @@ export default function ChatPage() {
               type="text"
               value={formValue}
               onChange={(e) => setFormValue(e.target.value)}
-              placeholder={activeTopic ? `Message #${activeTopic.title} (links auto-preview, ||spoilers||)...` : 'Select a channel first...'}
-              disabled={!activeTopic}
-              className="flex-1 bg-[#141721] border border-slate-700/60 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 transition-all shadow-inner disabled:opacity-50"
+              placeholder={movieTitle ? `Ask CineMind about ${movieTitle}...` : (activeTopic ? `Message #${activeTopic.title} (links auto-preview, ||spoilers||)...` : 'Select a channel first...')}
+              disabled={!activeTopic && !movieTitle}
+              className="flex-1 bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-4 py-3 text-xs md:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-all shadow-inner disabled:opacity-50"
             />
             
             <button 
               type="submit" 
-              disabled={(!formValue.trim()) || !activeTopic || isSubmitting}
-              className="px-6 py-3 bg-red-600 hover:bg-red-500 disabled:bg-[#141721] disabled:text-slate-600 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer shadow-sm flex-shrink-0"
+              disabled={(!formValue.trim()) || (!activeTopic && !movieTitle) || isSubmitting}
+              className="px-5 md:px-6 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:bg-[#0e0e18] disabled:text-slate-600 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer shadow-sm shrink-0"
             >
               {isSubmitting ? 'Sending...' : 'Send'}
             </button>
@@ -825,73 +1046,20 @@ export default function ChatPage() {
 
       </main>
 
-      {/* WHITEBOARD MODAL */}
-      {showWhiteboard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">🎨 Collaborative Storyboard Whiteboard</h2>
-              <button onClick={() => setShowWhiteboard(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
-            </div>
-            <div className="w-full h-80 bg-zinc-950 border border-slate-800 rounded-xl flex items-center justify-center text-slate-500 font-mono text-xs">
-              [Shared Canvas Node Active - Sketching Shot List & Scene Layouts]
-            </div>
-            <button onClick={() => setShowWhiteboard(false)} className="w-full py-2.5 bg-red-600 text-white text-xs font-bold rounded-xl cursor-pointer">Close Whiteboard</button>
-          </div>
-        </div>
-      )}
-
-      {/* FILE VAULT MODAL */}
-      {showFileVault && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl relative flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">🔒 Licensed P2P File Vault</h2>
-              <button onClick={() => setShowFileVault(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
-            </div>
-            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto">
-              {vaultFiles.map((file, idx) => (
-                <div key={idx} className="p-3 bg-[#141721] border border-slate-800 rounded-xl flex items-center justify-between text-xs text-slate-300">
-                  <div>
-                    <span className="font-bold text-white block">{file.name}</span>
-                    <span className="text-[10px] text-slate-500 font-mono">{file.size} • Cost: {file.cost} Tokens</span>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      if (userWalletBalance < file.cost) {
-                        alert("Insufficient Studio Tokens to license this file.");
-                        return;
-                      }
-                      setUserWalletBalance(prev => prev - file.cost);
-                      alert(`Successfully licensed and downloaded ${file.name}! (-${file.cost} Tokens)`);
-                    }} 
-                    className="px-3 py-1 bg-red-600 text-white text-[10px] font-bold rounded-lg cursor-pointer"
-                  >
-                    License ({file.cost} 🪙)
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button onClick={() => setShowFileVault(false)} className="w-full py-2.5 bg-zinc-800 text-white text-xs font-bold rounded-xl cursor-pointer">Close Vault</button>
-          </div>
-        </div>
-      )}
-
       {/* WATCH PARTY MODAL */}
       {showWatchParty && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-xl shadow-2xl relative flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-[#0b0b14] border border-cyan-500/40 p-6 rounded-2xl w-full max-w-xl shadow-2xl relative flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-cyan-500/20">
               <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                 <span>🍿</span> Community Watch Party Synchronization
               </h2>
-              <button onClick={() => setShowWatchParty(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button type="button" onClick={() => setShowWatchParty(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
             </div>
             
-            <div className="p-4 bg-zinc-900 border border-slate-800 rounded-xl text-xs text-slate-300 flex flex-col gap-3">
-              <p>Active watch party node initialized for channel: <span className="text-red-400 font-bold">#{activeTopic?.title}</span></p>
-              <div className="w-full h-48 bg-black rounded-lg border border-slate-800 flex items-center justify-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-cover bg-center opacity-40"></div>
+            <div className="p-4 bg-zinc-900 border border-cyan-500/20 rounded-xl text-xs text-slate-300 flex flex-col gap-3">
+              <p>Active watch party node initialized for channel: <span className="text-cyan-400 font-bold">#{activeTopic?.title}</span></p>
+              <div className="w-full h-48 bg-black rounded-lg border border-cyan-500/20 flex items-center justify-center relative overflow-hidden">
                 <div className="relative z-10 flex flex-col items-center gap-2 text-center">
                   <span className="text-2xl">▶</span>
                   <span className="font-mono text-[11px] text-slate-300">Synchronized Playback Engine Ready</span>
@@ -899,7 +1067,7 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <button onClick={() => setShowWatchParty(false)} className="w-full py-3 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer">
+            <button type="button" onClick={() => setShowWatchParty(false)} className="w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer">
               Join Screening Room
             </button>
           </div>
@@ -909,10 +1077,10 @@ export default function ChatPage() {
       {/* POLL MODAL */}
       {showPollModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl relative flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-[#0b0b14] border border-cyan-500/40 p-6 rounded-2xl w-full max-w-md shadow-2xl relative flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-cyan-500/20">
               <h2 className="text-sm font-bold text-white uppercase tracking-wider">Create Community Poll</h2>
-              <button onClick={() => setShowPollModal(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button type="button" onClick={() => setShowPollModal(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
             </div>
 
             <div className="flex flex-col gap-3">
@@ -923,7 +1091,7 @@ export default function ChatPage() {
                   value={pollQuestion}
                   onChange={(e) => setPollQuestion(e.target.value)}
                   placeholder="e.g. Best Sci-fi Masterpiece of the Decade?"
-                  className="w-full bg-[#141721] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  className="w-full bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-3 py-2 text-xs text-white"
                 />
               </div>
 
@@ -940,11 +1108,11 @@ export default function ChatPage() {
                       setPollOptions(updated);
                     }}
                     placeholder={`Option ${idx + 1}`}
-                    className="w-full bg-[#141721] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white mb-2"
+                    className="w-full bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-3 py-2 text-xs text-white mb-2"
                   />
                 ))}
                 {pollOptions.length < 4 && (
-                  <button onClick={() => setPollOptions([...pollOptions, ''])} className="text-xs text-red-400 hover:underline cursor-pointer">
+                  <button type="button" onClick={() => setPollOptions([...pollOptions, ''])} className="text-xs text-cyan-400 hover:underline cursor-pointer">
                     + Add Option
                   </button>
                 )}
@@ -952,8 +1120,9 @@ export default function ChatPage() {
             </div>
 
             <div className="flex gap-3 mt-2">
-              <button onClick={() => setShowPollModal(false)} className="flex-1 py-2.5 bg-zinc-800 text-white text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
+              <button type="button" onClick={() => setShowPollModal(false)} className="flex-1 py-2.5 bg-[#0e0e18] text-white text-xs font-bold rounded-xl cursor-pointer border border-cyan-500/20">Cancel</button>
               <button 
+                type="button"
                 onClick={() => {
                   if (!pollQuestion.trim() || pollOptions.some(o => !o.trim())) return;
                   sendMessage({
@@ -968,7 +1137,7 @@ export default function ChatPage() {
                   setPollOptions(['', '']);
                   setShowPollModal(false);
                 }} 
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl cursor-pointer"
+                className="flex-1 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 text-white text-xs font-bold rounded-xl cursor-pointer"
               >
                 Launch Poll
               </button>
@@ -980,10 +1149,10 @@ export default function ChatPage() {
       {/* MOVIE PICKER MODAL */}
       {showMoviePicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl relative max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+          <div className="bg-[#0b0b14] border border-cyan-500/40 p-6 rounded-2xl w-full max-w-md shadow-2xl relative max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-cyan-500/20">
               <h2 className="text-sm font-bold text-white uppercase tracking-wider">Attach Movie from Screening Room</h2>
-              <button onClick={() => setShowMoviePicker(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button type="button" onClick={() => setShowMoviePicker(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
             </div>
 
             <div className="flex-1 overflow-y-auto flex flex-col gap-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-800">
@@ -997,9 +1166,13 @@ export default function ChatPage() {
                       sendMessage({ movieCard: movie });
                       setShowMoviePicker(false);
                     }}
-                    className="flex gap-3 p-3 bg-[#141721] hover:bg-slate-800 border border-slate-800 rounded-xl cursor-pointer transition-all items-center"
+                    className="flex gap-3 p-3 bg-[#0e0e18] hover:bg-cyan-500/10 border border-cyan-500/20 rounded-xl cursor-pointer transition-all items-center"
                   >
-                    {movie.poster_path && <img src={movie.poster_path} alt={movie.title} className="w-10 h-14 object-cover rounded" />}
+                    {movie.poster_path && (
+                      <div className="relative w-10 h-14 rounded overflow-hidden shrink-0">
+                        <Image src={movie.poster_path} alt={movie.title} fill unoptimized sizes="40px" className="object-cover" />
+                      </div>
+                    )}
                     <div className="flex flex-col">
                       <h4 className="text-xs font-bold text-white">{movie.title}</h4>
                       <p className="text-[10px] text-slate-400 line-clamp-1">{movie.overview}</p>
@@ -1015,11 +1188,11 @@ export default function ChatPage() {
       {/* CREATE TOPIC MODAL */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-[#10131d] border border-slate-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl relative">
+          <div className="bg-[#0b0b14] border border-cyan-500/40 p-6 rounded-2xl w-full max-w-lg shadow-2xl relative">
             
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-cyan-500/20">
               <h2 className="text-base font-bold text-white">Create New Channel Topic</h2>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button type="button" onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
             </div>
             
             <form onSubmit={handleCreateTopic} className="flex flex-col gap-4">
@@ -1030,36 +1203,23 @@ export default function ChatPage() {
                   value={newTopicTitle}
                   onChange={(e) => setNewTopicTitle(e.target.value)}
                   placeholder="e.g. Denis Villeneuve's Directing Style..."
-                  className="w-full bg-[#141721] border border-slate-700/60 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 transition-colors"
+                  className="w-full bg-[#0e0e18] border border-cyan-500/20 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors"
                   required
                 />
               </div>
 
-              <div className="flex items-center gap-2 p-3 bg-[#141721] border border-slate-700 rounded-xl">
-                <input 
-                  type="checkbox"
-                  id="vipCheck"
-                  checked={isVipChannel}
-                  onChange={(e) => setIsVipChannel(e.target.checked)}
-                  className="w-4 h-4 accent-red-600 cursor-pointer"
-                />
-                <label htmlFor="vipCheck" className="text-xs text-slate-200 font-medium cursor-pointer">
-                  👑 Restrict to VIP Directors Circle Pass Holders Only
-                </label>
-              </div>
-
-              <div className="flex gap-3 mt-4 pt-4 border-t border-slate-800">
+              <div className="flex gap-3 mt-4 pt-4 border-t border-cyan-500/20">
                 <button 
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-3 bg-[#141721] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                  className="flex-1 py-3 bg-[#0e0e18] hover:bg-cyan-500/10 text-slate-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-cyan-500/20"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit"
                   disabled={!newTopicTitle.trim()}
-                  className="flex-1 py-3 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-sm"
+                  className="flex-1 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-sm"
                 >
                   Launch Channel
                 </button>

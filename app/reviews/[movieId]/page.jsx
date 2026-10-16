@@ -119,7 +119,7 @@ export default function MovieReviewsPage() {
           <div className="flex items-center gap-4">
             {moviePoster && (
               <div className="w-12 h-16 relative rounded overflow-hidden shadow-lg border border-white/10">
-                <Image src={`https://image.tmdb.org/t/p/w200${moviePoster}`} alt={movieTitle} fill className="object-cover" />
+                <Image src={`https://image.tmdb.org/t/p/w200${moviePoster}`} alt={movieTitle} fill sizes="48px" className="object-cover" />
               </div>
             )}
             <div>
@@ -147,9 +147,9 @@ export default function MovieReviewsPage() {
             const isMe = log.userId === user.uid;
             return (
               <div key={log.id} className={`flex gap-4 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className="w-10 h-10 rounded-full overflow-hidden bg-[#1a1a1a] border border-[#333] flex-shrink-0 mt-1">
+                <div className="relative w-10 h-10 rounded-full overflow-hidden bg-[#1a1a1a] border border-[#333] flex-shrink-0 mt-1">
                   {log.authorAvatar ? (
-                    <img src={log.authorAvatar} alt="Avatar" className="w-full h-full object-cover" />
+                    <Image src={log.authorAvatar} alt="Avatar" fill unoptimized sizes="40px" className="object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-xs">👤</div>
                   )}

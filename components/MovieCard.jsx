@@ -1,3 +1,4 @@
+// components/MovieCard.jsx
 "use client";
 
 import { useState } from 'react';
@@ -45,7 +46,11 @@ export default function MovieCard({ movie, watchlist, onSaveToWatchlist, removeF
             src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
             alt={movie.title}
             fill
+            unoptimized
             sizes="300px"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
             className="object-cover group-hover:scale-105 transition-transform duration-500"
           />
         ) : (
