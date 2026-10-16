@@ -1,415 +1,769 @@
+// app/profile/page.jsx
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { onAuthStateChanged, updateProfile, signOut } from 'firebase/auth';
-import { auth, db } from '@/firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  serverTimestamp 
-} from 'firebase/firestore';
-import { useWatchlist } from '@/hooks/useWatchlist';
 import Image from 'next/image';
+import Link from 'next/link';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { auth, db } from '@/firebase';
+import { useWatchlist } from '@/hooks/useWatchlist';
+import MovieModal from '@/components/MovieModal';
 
-// Import Isolated Modules
-import DashboardTab from '@/components/profile/DashboardTab';
-import WalletTab from '@/components/profile/WalletTab';
-import AvatarTab from '@/components/profile/AvatarTab';
-import ReviewsTab from '@/components/profile/ReviewsTab';
-import SettingsTab from '@/components/profile/SettingsTab';
+const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 
-const ACCENT_PRESETS = {
-  red: { name: 'Crimson Core', border: 'border-red-600', borderGlow: 'group-hover:border-red-500/50', text: 'text-red-400', badgeText: 'text-red-400', bg: 'bg-red-600', hoverBg: 'hover:bg-red-700', badge: 'bg-red-950/40 border-red-900/50', dot: 'bg-red-600', ring: 'focus:border-red-500', accent: 'accent-red-600', swatch: 'bg-red-600', shadow: 'shadow-red-600/30', tabGlow: 'text-red-500', isPro: false },
-  amber: { name: 'Cyber Amber', border: 'border-amber-500', borderGlow: 'group-hover:border-amber-500/50', text: 'text-amber-400', badgeText: 'text-amber-400', bg: 'bg-amber-600', hoverBg: 'hover:bg-amber-700', badge: 'bg-amber-950/40 border-amber-900/50', dot: 'bg-amber-500', ring: 'focus:border-amber-500', accent: 'accent-amber-500', swatch: 'bg-amber-500', shadow: 'shadow-amber-500/30', tabGlow: 'text-amber-400', isPro: false },
-  blue: { name: 'Neon Syndicate', border: 'border-blue-500', borderGlow: 'group-hover:border-blue-500/50', text: 'text-blue-400', badgeText: 'text-blue-400', bg: 'bg-blue-600', hoverBg: 'hover:bg-blue-700', badge: 'bg-blue-950/40 border-blue-900/50', dot: 'bg-blue-500', ring: 'focus:border-blue-500', accent: 'accent-blue-500', swatch: 'bg-blue-500', shadow: 'shadow-blue-500/30', tabGlow: 'text-blue-400', isPro: true },
-  emerald: { name: 'Void Walkers', border: 'border-emerald-500', borderGlow: 'group-hover:border-emerald-500/50', text: 'text-emerald-400', badgeText: 'text-emerald-400', bg: 'bg-emerald-600', hoverBg: 'hover:bg-emerald-700', badge: 'bg-emerald-950/40 border-emerald-900/50', dot: 'bg-emerald-500', ring: 'focus:border-emerald-500', accent: 'accent-emerald-500', swatch: 'bg-emerald-500', shadow: 'shadow-emerald-500/30', tabGlow: 'text-emerald-400', isPro: true }
-};
-
-export default function ProfilePage() {
+export default function ProfileDashboardPage() {
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('Dashboard'); 
-  const [isSaving, setIsSaving] = useState(false);
-  const [isProUser, setIsProUser] = useState(false); 
-  const [stripeLoading, setStripeLoading] = useState(false);
-  const [toastMessage, setToastMessage] = useState(null);
+  const { watchlist } = useWatchlist();
   
-  // Global Profile State
-  const [displayNameInput, setDisplayNameInput] = useState('');
-  const [userRank, setUserRank] = useState('Operative');
-  const [userFaction, setUserFaction] = useState(null); 
-  const [bioTagline, setBioTagline] = useState('Operating orbital sensory feeds and archive transmissions.');
-  const [accentColor, setAccentColor] = useState('red'); 
-  const [compactMode, setCompactMode] = useState(false);
-  const [hoverGlow, setHoverGlow] = useState(true);
-  const [ambientBackdrop, setAmbientBackdrop] = useState(true);
-  const [defaultReviewPublic, setDefaultReviewPublic] = useState(true);
-  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [profileData, setProfileData] = useState({
+    displayName: 'Mathew Scott',
+    role: 'Head of Production',
+    clearance: 'Level 4 Director',
+    walletCoins: 385,
+    inventory: [],
+    equippedFrame: null,
+    equippedTitle: null,
+    claimedBounties: []
+  });
 
-  // Top-Tier Profile Upgrades State: Custom Status & Profile Banner Pattern
-  const [customStatus, setCustomStatus] = useState('Monitoring grid feeds...');
-  const [bannerStyle, setBannerStyle] = useState('from-[#1a0505] to-[#0a0505]');
+  const [activeTab, setActiveTab] = useState('recommendations'); // 'recommendations' | 'transmissions' | 'vault'
+  const [userReviews, setUserReviews] = useState([]);
+  const [watchlistRecommendations, setWatchlistRecommendations] = useState([]);
+  const [isLoadingRecs, setIsLoadingRecs] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [claimingId, setClaimingId] = useState(null);
 
-  // Studio Token Economy State
-  const [userWalletBalance, setUserWalletBalance] = useState(150);
-  const [userXp, setUserXp] = useState(320);
-
-  // Global Data State
-  const [reviews, setReviews] = useState([]);
-  const [activeBounties, setActiveBounties] = useState([]);
-  const [claimedBounties, setClaimedBounties] = useState([]);
-  const [totalBountyPoints, setTotalBountyPoints] = useState(0);
+  // Modal State
+  const [selectedMovieId, setSelectedMovieId] = useState(null);
 
   const router = useRouter();
-  const { watchlist } = useWatchlist();
 
-  const showToast = (message, type = 'info') => {
-    setToastMessage({ message, type });
-    setTimeout(() => setToastMessage(null), 4000);
+  // Recommendations anchored to user's saved watchlist
+  const fetchPersonalizedRecommendations = async (savedItems = []) => {
+    setIsLoadingRecs(true);
+    try {
+      if (savedItems.length > 0) {
+        const shuffled = [...savedItems].sort(() => 0.5 - Math.random()).slice(0, 3);
+        const aggregatedRecs = [];
+
+        for (const item of shuffled) {
+          const movieId = item.id || item.movieId;
+          if (!movieId) continue;
+
+          try {
+            const res = await fetch(
+              `https://api.themoviedb.org/3/movie/${movieId}/recommendations?api_key=${TMDB_API_KEY}&language=en-US&page=1`
+            );
+            const data = await res.json();
+            if (data.results && data.results.length > 0) {
+              data.results.slice(0, 3).forEach(movie => {
+                if (movie.poster_path && !aggregatedRecs.some(r => r.id === movie.id)) {
+                  aggregatedRecs.push({
+                    id: movie.id,
+                    title: movie.title,
+                    year: (movie.release_date || '').slice(0, 4) || 'N/A',
+                    posterPath: movie.poster_path,
+                    status: `Based on your Watchlist: ${item.title || item.name || 'Saved Title'}`,
+                    match: `${Math.min(99, Math.floor((movie.vote_average || 7) * 10) + 12)}%`
+                  });
+                }
+              });
+            }
+          } catch (e) {
+            console.error("TMDB Recs query error:", e);
+          }
+        }
+
+        if (aggregatedRecs.length > 0) {
+          setWatchlistRecommendations(aggregatedRecs.slice(0, 8));
+          setIsLoadingRecs(false);
+          return;
+        }
+      }
+
+      const fallbackRes = await fetch(
+        `https://api.themoviedb.org/3/movie/top_rated?api_key=${TMDB_API_KEY}&language=en-US&page=1`
+      );
+      const fallbackData = await fallbackRes.json();
+      const fallbackRecs = (fallbackData.results || []).slice(0, 8).map(m => ({
+        id: m.id,
+        title: m.title,
+        year: (m.release_date || '').slice(0, 4),
+        posterPath: m.poster_path,
+        status: 'Studio Premieres',
+        match: `${Math.floor((m.vote_average || 7.5) * 10)}%`
+      }));
+      setWatchlistRecommendations(fallbackRecs);
+
+    } catch (err) {
+      console.error("Failed to build recommendations:", err);
+    } finally {
+      setIsLoadingRecs(false);
+    }
   };
 
   useEffect(() => {
-    let unsubscribeReviews = () => {};
-    let unsubscribeBounties = () => {};
-    let unsubscribeClaims = () => {};
-
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        setDisplayNameInput(currentUser.displayName || '');
-        setAvatarUrl(currentUser.photoURL || null);
-
         try {
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
           if (userDoc.exists()) {
             const data = userDoc.data();
-            setIsProUser(data.tier === 'pro');
-            if (data.userRank) setUserRank(data.userRank);
-            if (data.bioTagline) setBioTagline(data.bioTagline);
-            if (data.walletBalance !== undefined) setUserWalletBalance(data.walletBalance);
-            if (data.userXp !== undefined) setUserXp(data.userXp);
-            if (data.customStatus) setCustomStatus(data.customStatus);
-            if (data.bannerStyle) setBannerStyle(data.bannerStyle);
-            
-            if (data.faction) {
-              setUserFaction(data.faction);
-              if (data.faction === "Neon Syndicate") setAccentColor('blue');
-              else if (data.faction === "Crimson Cartel") setAccentColor('red');
-              else if (data.faction === "Void Walkers") setAccentColor('emerald');
-            } else if (data.accentColor && ACCENT_PRESETS[data.accentColor]) {
-              setAccentColor(data.accentColor);
-            }
-
-            if (data.compactMode !== undefined) setCompactMode(data.compactMode);
-            if (data.hoverGlow !== undefined) setHoverGlow(data.hoverGlow);
-            if (data.ambientBackdrop !== undefined) setAmbientBackdrop(data.ambientBackdrop);
-            if (data.defaultReviewPublic !== undefined) setDefaultReviewPublic(data.defaultReviewPublic);
+            setProfileData(prev => ({
+              ...prev,
+              displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
+              walletCoins: Math.max(0, data.coins ?? 385),
+              inventory: data.inventory || [],
+              equippedFrame: data.equippedFrame || null,
+              equippedTitle: data.equippedTitle || null,
+              claimedBounties: data.claimedBounties || []
+            }));
           }
-        } catch (error) {
-          console.error("Error fetching user telemetry:", error);
+
+          const q = query(
+            collection(db, 'reviews'),
+            where('userId', '==', currentUser.uid),
+            limit(30)
+          );
+          const snaps = await getDocs(q);
+          const revs = [];
+          snaps.forEach(d => {
+            const data = d.data();
+            if (!data.isBotTransmission) {
+              revs.push({ id: d.id, ...data });
+            }
+          });
+          setUserReviews(revs);
+
+        } catch (err) {
+          console.error("Profile retrieval error:", err);
+        } finally {
+          setIsLoading(false);
         }
-
-        const qReviews = query(collection(db, 'reviews'), where('userId', '==', currentUser.uid), orderBy('createdAt', 'desc'));
-        unsubscribeReviews = onSnapshot(qReviews, (snapshot) => {
-          setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), date: doc.data().createdAt?.toDate().toLocaleDateString() || new Date().toLocaleDateString() })));
-        });
-
-        const qBounties = query(collection(db, 'bounties'), where('isActive', '==', true));
-        unsubscribeBounties = onSnapshot(qBounties, (snapshot) => {
-          setActiveBounties(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        });
-
-        const qClaims = query(collection(db, `users/${currentUser.uid}/claims`));
-        unsubscribeClaims = onSnapshot(qClaims, (snapshot) => {
-          const claims = snapshot.docs.map(doc => doc.data());
-          setClaimedBounties(claims.map(c => c.bountyId));
-          setTotalBountyPoints(claims.reduce((sum, claim) => sum + (claim.pointsAwarded || 0), 0));
-        });
-
-        setAuthLoading(false);
       } else {
-        router.push('/');
+        router.push('/login');
       }
     });
 
-    return () => {
-      unsubscribeAuth();
-      unsubscribeReviews();
-      unsubscribeBounties();
-      unsubscribeClaims();
-    };
+    return () => unsubscribe();
   }, [router]);
 
-  const handleSaveSettings = async (e) => {
-    if (e) e.preventDefault();
-    if (!user) return;
-    setIsSaving(true);
-    try {
-      if (displayNameInput !== user.displayName) await updateProfile(user, { displayName: displayNameInput });
-      
-      let validatedAccent = accentColor;
-      if (!userFaction && !isProUser && ACCENT_PRESETS[accentColor]?.isPro) validatedAccent = 'red';
-      
-      await setDoc(doc(db, 'users', user.uid), {
-        displayName: displayNameInput,
-        userRank,
-        bioTagline,
-        customStatus,
-        bannerStyle,
-        accentColor: validatedAccent,
-        compactMode,
-        hoverGlow,
-        ambientBackdrop,
-        defaultReviewPublic,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      showToast("Telemetry locked and synchronized.", "success");
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      showToast("Transmission synchronization failed.", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  useEffect(() => {
+    fetchPersonalizedRecommendations(watchlist || []);
+  }, [watchlist]);
 
-  // Connected Stripe VIP Checkout Handler
-  const handleStripeCheckout = async () => {
-    if (!user) {
-      showToast("Operative authentication required.", "error");
-      return;
-    }
-
-    setStripeLoading(true);
+  // Read watched state from storage
+  const [watchedCount, setWatchedCount] = useState(0);
+  useEffect(() => {
     try {
-      const response = await fetch('/api/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID_VIP, // Pulls your verified Stripe Price ID
-          userId: user.uid,
-          userEmail: user.email,
-        }),
+      const saved = localStorage.getItem('scenesense_watched_map');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setWatchedCount(Object.values(parsed).filter(Boolean).length);
+      }
+    } catch (e) {
+      console.error("Error reading watched map:", e);
+    }
+  }, []);
+
+  const savedTitlesCount = (watchlist || []).length;
+  const reviewsCount = userReviews.length;
+
+  // Real-time Objectives
+  const objectives = useMemo(() => [
+    {
+      id: 'curate_watchlist',
+      title: 'Studio Scout: Watchlist Curation',
+      description: 'Explore the film catalog and save at least 5 titles to your active watchlist.',
+      goal: 5,
+      current: savedTitlesCount,
+      reward: 35,
+      icon: '📋'
+    },
+    {
+      id: 'screening_log',
+      title: 'Projectionist: Screening Log',
+      description: 'Confirm completed film viewings by toggling 3 titles as watched in your watchlist.',
+      goal: 3,
+      current: watchedCount,
+      reward: 50,
+      icon: '🎞️'
+    },
+    {
+      id: 'lead_critic',
+      title: 'Film Critic: File a Review',
+      description: 'Draft and file a verified critique in Global Reviews to earn your production stipend.',
+      goal: 1,
+      current: reviewsCount,
+      reward: 75,
+      icon: '✍️'
+    }
+  ], [savedTitlesCount, watchedCount, reviewsCount]);
+
+  // Handle Objective Claim Payout
+  const handleClaimReward = async (obj) => {
+    if (!user || profileData.claimedBounties.includes(obj.id) || claimingId) return;
+    setClaimingId(obj.id);
+
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      const updatedClaims = [...profileData.claimedBounties, obj.id];
+
+      await updateDoc(userRef, {
+        coins: increment(obj.reward),
+        claimedBounties: updatedClaims
       });
 
-      const text = await response.text();
-      let data = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch (parseError) {
-        console.error('Failed to parse checkout response as JSON:', text);
-      }
-
-      if (response.ok && data.url) {
-        window.location.href = data.url; // Redirects to Stripe Hosted Checkout
-      } else {
-        showToast(data.error || "Stripe checkout initialization failed.", "error");
-      }
-    } catch (error) {
-      console.error('Checkout error:', error);
-      showToast("Payment portal offline.", "error");
+      setProfileData(prev => ({
+        ...prev,
+        walletCoins: prev.walletCoins + obj.reward,
+        claimedBounties: updatedClaims
+      }));
+    } catch (err) {
+      console.error("Failed to claim objective reward:", err);
     } finally {
-      setStripeLoading(false);
+      setClaimingId(null);
     }
   };
 
-  const handleLogout = async () => {
+  // Toggle Equipment Function (Frame or Title)
+  const handleToggleEquip = async (itemId, type) => {
+    if (!user) return;
+    const isCurrentlyEquipped = profileData[type] === itemId;
+    const nextValue = isCurrentlyEquipped ? null : itemId;
+
     try {
-      await signOut(auth);
-      router.push('/');
-    } catch (error) {
-      console.error('Error signing out:', error);
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, { [type]: nextValue });
+      setProfileData(prev => ({ ...prev, [type]: nextValue }));
+    } catch (err) {
+      console.error("Failed to update equipment locker:", err);
     }
   };
 
-  const activeTheme = ACCENT_PRESETS[accentColor] || ACCENT_PRESETS.red;
-  const recentActivity = watchlist?.length > 0 ? watchlist.slice(0, 5) : [];
-  const radarItems = watchlist?.length > 5 ? watchlist.slice(5, 8) : [];
-  const primaryPoster = recentActivity[0]?.poster_path;
+  // Format screen credit title
+  const getDisplayTitleLabel = (titleId) => {
+    switch (titleId) {
+      case 'title_shadow_operative':
+        return 'EXECUTIVE PRODUCER';
+      case 'title_archivist':
+        return 'CHIEF ARCHIVIST';
+      default:
+        return 'DIRECTOR';
+    }
+  };
 
-  if (authLoading) {
+  if (!user && isLoading) {
     return (
-      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center gap-4 text-white">
-        <div className="w-10 h-10 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin" />
-        <p className="text-xs uppercase tracking-widest text-gray-500">Decrypting terminal credentials...</p>
+      <div className="min-h-[80vh] flex flex-col items-center justify-center space-y-3">
+        <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-mono text-cyan-400 uppercase tracking-widest">Loading Director&apos;s Dossier...</span>
       </div>
     );
   }
 
-  if (!user) return null;
-
   return (
-    <div className="min-h-screen bg-[#050505] py-10 px-4 font-sans selection:bg-red-500/30 flex items-center justify-center relative">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 font-sans text-white relative">
       
-      {toastMessage && (
-        <div className={`fixed top-5 right-5 z-50 px-4 py-2.5 rounded-lg border text-xs font-bold uppercase tracking-wider backdrop-blur-md shadow-2xl transition-all duration-300 ${
-          toastMessage.type === 'error' ? 'bg-red-950/80 border-red-500 text-red-200' : 'bg-green-950/80 border-green-500 text-green-200'
-        }`}>
-          {toastMessage.message}
-        </div>
-      )}
+      {/* Background Ambience */}
+      <div className="absolute top-0 right-1/4 w-96 h-96 bg-cyan-600/10 rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute bottom-10 left-10 w-96 h-96 bg-indigo-600/10 rounded-full blur-[140px] pointer-events-none" />
 
-      {ambientBackdrop && primaryPoster && (
-        <div className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none">
-          <Image 
-            src={`https://image.tmdb.org/t/p/w500${primaryPoster.startsWith('/') ? '' : '/'}${primaryPoster}`} 
-            alt="Backdrop Ambience" 
-            fill 
-            className="object-cover blur-3xl scale-110" 
-            priority 
-          />
-        </div>
-      )}
+      {/* TOP DOSSIER HUD BAR */}
+      <div className="bg-[#07070d] border border-cyan-500/20 rounded-3xl p-6 sm:p-8 backdrop-blur-xl relative overflow-hidden shadow-[0_0_50px_rgba(6,182,212,0.12)]">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
+          
+          <div className="flex items-center gap-5">
+            {/* High-Impact Animated Avatar Frame */}
+            <div className="relative group shrink-0">
+              {/* Outer Glow Halo */}
+              <div 
+                className={`absolute -inset-1.5 rounded-3xl blur-md transition-all duration-500 pointer-events-none ${
+                  profileData.equippedFrame === 'frame_solar_gold'
+                    ? 'bg-gradient-to-tr from-amber-500 via-yellow-300 to-amber-600 opacity-80 animate-pulse'
+                    : profileData.equippedFrame === 'frame_neon_cyan'
+                      ? 'bg-gradient-to-tr from-cyan-400 via-sky-300 to-indigo-500 opacity-90 animate-pulse'
+                      : 'bg-cyan-500/20 opacity-0'
+                }`} 
+              />
 
-      <main className="w-full max-w-5xl bg-[#0a0a0a]/90 backdrop-blur-xl rounded-2xl shadow-[0_0_80px_rgba(0,0,0,1)] overflow-hidden border border-white/10 relative z-10 transition-all duration-500 hover:border-white/20">
-        
-        {/* GLOBAL HEADER WITH DYNAMIC BANNER PATTERN */}
-        <div className={`relative bg-gradient-to-b ${bannerStyle} pt-10 pb-0 px-8 border-b border-white/5 transition-all duration-500`}>
-          <div className="flex justify-between items-start w-full relative z-10">
-            <div className="flex items-center gap-3 text-white/90 cursor-pointer group" onClick={() => router.push('/')}>
-              <div className="bg-red-600/20 p-2 rounded-lg border border-red-500/30 group-hover:bg-red-600/40 transition-colors">
-                <span className="text-red-500 text-xl">🎬</span>
+              {/* Avatar Box */}
+              <div
+                className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden p-1 bg-[#090912] transition-all duration-300 ${
+                  profileData.equippedFrame === 'frame_solar_gold'
+                    ? 'border-2 border-amber-300 shadow-[0_0_30px_rgba(251,191,36,0.7)] ring-2 ring-amber-400/50'
+                    : profileData.equippedFrame === 'frame_neon_cyan'
+                      ? 'border-2 border-cyan-300 shadow-[0_0_30px_rgba(6,182,212,0.8)] ring-2 ring-cyan-400/60'
+                      : 'border-2 border-white/10'
+                }`}
+              >
+                <Image
+                  src={user?.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250"}
+                  alt="Director Avatar"
+                  fill
+                  sizes="96px"
+                  className="object-cover rounded-xl"
+                />
+                
+                {/* Status Dot */}
+                <span 
+                  className={`absolute bottom-1 right-1 w-3.5 h-3.5 border-2 border-black rounded-full shadow-md ${
+                    profileData.equippedFrame === 'frame_solar_gold'
+                      ? 'bg-amber-400 shadow-[0_0_10px_#fbbf24]'
+                      : profileData.equippedFrame === 'frame_neon_cyan'
+                        ? 'bg-cyan-400 shadow-[0_0_10px_#22d3ee]'
+                        : 'bg-emerald-400 shadow-[0_0_10px_#10b981]'
+                  }`} 
+                />
               </div>
-              <span className="font-bold text-lg tracking-widest uppercase bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-500">SceneSense</span>
             </div>
-            
-            <div className="flex items-center gap-4">
-              {!isProUser && (
-                <button 
-                  onClick={handleStripeCheckout} 
-                  disabled={stripeLoading}
-                  className="relative overflow-hidden group bg-gradient-to-r from-red-600 to-red-800 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-[0_0_15px_rgba(220,38,38,0.4)] cursor-pointer hover:brightness-110 transition-all disabled:opacity-50"
-                >
-                  <span className="relative z-10 flex items-center gap-1">
-                    {stripeLoading ? 'Securing Uplink...' : '👑 Upgrade VIP ($9.99/mo)'}
+
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl sm:text-3xl font-serif italic tracking-wide text-white">
+                  {profileData.displayName}
+                </h1>
+                
+                {/* Active Opening Screen Credit */}
+                {profileData.equippedTitle ? (
+                  <span className="px-2.5 py-0.5 bg-gradient-to-r from-amber-500/20 to-amber-600/30 border border-amber-500/50 text-[10px] font-mono text-amber-300 font-bold rounded-md shadow-sm">
+                    [{getDisplayTitleLabel(profileData.equippedTitle)}]
                   </span>
-                </button>
-              )}
-              <div className="text-right text-[11px] text-gray-300 font-medium space-y-1 bg-black/40 px-4 py-2 rounded-xl border border-white/5">
-                <p>Status: <span className={isProUser ? "text-amber-400 font-bold" : "text-gray-400"}>{isProUser ? "VIP Pro" : "Standard"}</span></p>
-                <p>Studio Wallet: <span className="text-amber-400 font-bold font-mono">{userWalletBalance} 🪙</span></p>
+                ) : (
+                  <span className="px-2.5 py-0.5 bg-cyan-950/80 border border-cyan-500/40 text-[10px] font-mono text-cyan-300 font-bold rounded-md">
+                    {profileData.role}
+                  </span>
+                )}
               </div>
+              <p className="text-xs font-mono text-gray-400 flex items-center gap-2">
+                <span>Studio: London, ON</span>
+                <span>•</span>
+                <span className="text-emerald-400">{profileData.clearance}</span>
+              </p>
+              <p className="text-[11px] text-gray-400 italic">
+                Directing orbital cinema feeds, screenings, and personal watchlists.
+              </p>
             </div>
           </div>
 
-          <div className="flex flex-col items-center justify-center -mt-4 relative z-10 text-center">
-            {/* AVATAR WITH ONLINE PRESENCE PULSE */}
-            <div className="relative w-28 h-28 rounded-full overflow-hidden border-4 border-white/10 mb-4 bg-black transition-all duration-500 hover:scale-105 shadow-xl group">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="User Avatar" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-5xl">👤</div>
-              )}
-              <span className="absolute bottom-2 right-2 w-4 h-4 bg-green-500 border-2 border-black rounded-full animate-pulse" title="Online & Active" />
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full md:w-auto">
+            <Link 
+              href="/armoury"
+              className="bg-[#0e0e18] border border-amber-500/30 hover:border-amber-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer"
+            >
+              <span className="text-[10px] font-mono uppercase text-gray-400 group-hover:text-amber-300 block">Studio Coins</span>
+              <span className="text-lg font-black text-amber-400 flex items-center justify-center gap-1">
+                {profileData.walletCoins} <span className="text-sm">🪙</span>
+              </span>
+            </Link>
 
-            <h1 className="text-3xl font-black text-white tracking-tighter flex items-center gap-2 drop-shadow-md">
-              {displayNameInput || 'Callsign Offline'}
-              {isProUser && <span className="text-amber-400 text-xl animate-pulse">👑</span>}
-            </h1>
+            <Link 
+              href="/watchlist"
+              className="bg-[#0e0e18] border border-cyan-500/20 hover:border-cyan-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer"
+            >
+              <span className="text-[10px] font-mono uppercase text-gray-400 group-hover:text-cyan-300 block">Watchlist Titles</span>
+              <span className="text-lg font-black text-cyan-300">
+                {savedTitlesCount}
+              </span>
+            </Link>
 
-            {/* CUSTOM STATUS BADGE */}
-            <div className="mt-1 bg-black/60 border border-white/10 px-3 py-1 rounded-full flex items-center gap-2 text-xs text-gray-300">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span className="italic">{customStatus}</span>
+            <div className="bg-[#0e0e18] border border-cyan-500/20 px-4 py-2.5 rounded-2xl text-center col-span-2 sm:col-span-1">
+              <span className="text-[10px] font-mono uppercase text-gray-400 block">Dispatches Logged</span>
+              <span className="text-lg font-black text-indigo-300">
+                {userReviews.length}
+              </span>
             </div>
-            
-            <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
-              <div className={`border px-3 py-0.5 rounded-full ${activeTheme.badge}`}>
-                <p className={`text-[11px] font-black uppercase tracking-widest ${activeTheme.badgeText}`}>{userRank}</p>
-              </div>
-              {userFaction && (
-                <div className={`border px-3 py-0.5 rounded-full ${activeTheme.badge}`}>
-                  <p className={`text-[11px] font-black uppercase tracking-widest ${activeTheme.badgeText}`}>🛡️ {userFaction}</p>
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-gray-400 mt-2 max-w-md line-clamp-1 font-light">{bioTagline}</p>
           </div>
 
-          <div className="flex justify-center flex-wrap gap-4 sm:gap-6 mt-8 text-[10px] sm:text-xs font-bold uppercase tracking-widest text-gray-500">
-            {['Dashboard', 'Wallet', 'Reviews', 'Avatar', 'Settings', ...(isProUser ? ['Pro Analytics'] : [])].map((tab) => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`pb-4 px-2 transition-all duration-300 cursor-pointer relative ${activeTab === tab ? `text-white` : 'hover:text-gray-300'}`}>
-                {tab}
-                {activeTab === tab && <span className={`absolute bottom-0 left-0 w-full h-[3px] rounded-t-md bg-gradient-to-r from-transparent via-current to-transparent ${activeTheme.tabGlow}`} />}
+        </div>
+      </div>
+
+      {/* CALL SHEET OBJECTIVES & PROP DEPT ROW */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Call Sheet Objective Board */}
+        <div className="lg:col-span-2 bg-[#07070d] border border-cyan-500/30 rounded-3xl p-6 sm:p-7 relative overflow-hidden shadow-xl flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4 mb-5">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🎬</span>
+                <h3 className="text-sm font-mono uppercase tracking-widest text-cyan-300 font-bold">
+                  Daily Call Sheet Objectives
+                </h3>
+              </div>
+              <span className="text-[11px] font-mono text-gray-400">
+                {profileData.claimedBounties.length} / {objectives.length} Claimed
+              </span>
+            </div>
+
+            {/* List of Dynamic Objectives */}
+            <div className="space-y-4">
+              {objectives.map((obj) => {
+                const isClaimed = profileData.claimedBounties.includes(obj.id);
+                const isReady = obj.current >= obj.goal;
+                const progressPct = Math.min(100, Math.round((obj.current / obj.goal) * 100));
+
+                return (
+                  <div 
+                    key={obj.id} 
+                    className={`p-4 rounded-2xl border transition-all ${
+                      isClaimed 
+                        ? 'bg-[#091410]/40 border-emerald-500/20 opacity-75' 
+                        : 'bg-[#0d0d18] border-white/5 hover:border-cyan-500/40'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      
+                      <div className="flex-1 space-y-2 w-full">
+                        <div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-white flex items-center gap-2">
+                              <span>{obj.icon}</span>
+                              <span>{obj.title}</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-gray-400">
+                              {obj.current} / {obj.goal} ({progressPct}%)
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-gray-400 font-light mt-0.5 leading-snug">
+                            {obj.description}
+                          </p>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="h-1.5 w-full bg-black/70 rounded-full overflow-hidden border border-white/5">
+                          <div 
+                            className={`h-full transition-all duration-500 ${
+                              isClaimed 
+                                ? 'bg-emerald-500' 
+                                : isReady 
+                                  ? 'bg-gradient-to-r from-amber-400 to-amber-500' 
+                                  : 'bg-cyan-500'
+                            }`}
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Claim Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleClaimReward(obj)}
+                        disabled={!isReady || isClaimed || claimingId === obj.id}
+                        className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-mono font-bold transition-all shrink-0 flex items-center justify-center gap-1.5 ${
+                          isClaimed
+                            ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-400 cursor-default'
+                            : isReady
+                              ? 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black shadow-md shadow-amber-500/20 cursor-pointer active:scale-95'
+                              : 'bg-[#141420] border border-white/10 text-gray-500 cursor-not-allowed'
+                        }`}
+                      >
+                        {isClaimed ? (
+                          '✓ Claimed'
+                        ) : isReady ? (
+                          `Claim +${obj.reward} 🪙`
+                        ) : (
+                          `+${obj.reward} Coins`
+                        )}
+                      </button>
+
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* The Prop Dept Card */}
+        <div className="bg-[#07070d] border border-amber-500/30 rounded-3xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-amber-400">
+              <span>🎟️</span> Studio Commissary &amp; Backlot
+            </div>
+            <h3 className="text-lg font-bold text-white">
+              The Prop Department
+            </h3>
+            <p className="text-xs text-gray-400 leading-relaxed font-light">
+              Equip custom title badges, holographic critic foil, and expand your screening watchlist using Studio Coins.
+            </p>
+          </div>
+
+          <div className="pt-4 mt-2">
+            <Link
+              href="/armoury"
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-mono font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+            >
+              <span>Visit Prop Dept</span>
+              <span>↗</span>
+            </Link>
+          </div>
+        </div>
+
+      </div>
+
+      {/* FEED DECK */}
+      <div className="space-y-5">
+        <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4">
+          <div className="flex items-center gap-2">
+            {[
+              { id: 'recommendations', label: '🎬 Watchlist Recommendations' },
+              { id: 'transmissions', label: `📡 Critic Reviews (${userReviews.length})` },
+              { id: 'vault', label: '🪙 Studio Kit & Equipment Locker' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
+                  activeTab === tab.id
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white border border-cyan-400/50 shadow-md shadow-cyan-600/30'
+                    : 'bg-[#0e0e16] text-gray-400 hover:text-white border border-cyan-500/20'
+                }`}
+              >
+                {tab.label}
               </button>
             ))}
           </div>
+
+          <span className="text-xs font-mono text-cyan-400 hidden sm:inline-block">
+            {activeTab === 'recommendations' && '● Neural Affinity Matches'}
+            {activeTab === 'vault' && '● Active Production Equipment'}
+          </span>
         </div>
 
-        {/* TAB ROUTER INJECTION */}
-        {activeTab === 'Dashboard' && (
-          <DashboardTab 
-            user={user} userRank={userRank} activeTheme={activeTheme} 
-            compactMode={compactMode} hoverGlow={hoverGlow} 
-            recentActivity={recentActivity} radarItems={radarItems} 
-            activeBounties={activeBounties} claimedBounties={claimedBounties} showToast={showToast} 
-          />
+        {/* TAB 1: WATCHLIST RECOMMENDATIONS */}
+        {activeTab === 'recommendations' && (
+          <div>
+            {isLoadingRecs ? (
+              <div className="py-20 flex flex-col items-center justify-center space-y-3">
+                <div className="w-8 h-8 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs font-mono text-cyan-400 uppercase tracking-widest">
+                  Scanning Watchlist Matches...
+                </span>
+              </div>
+            ) : watchlistRecommendations.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {watchlistRecommendations.map((target) => (
+                  <div
+                    key={target.id}
+                    onClick={() => setSelectedMovieId(target.id)}
+                    className="bg-[#0b0b14] border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-3 flex flex-col justify-between group transition-all duration-300 shadow-md hover:-translate-y-1 hover:shadow-[0_10px_25px_rgba(6,182,212,0.2)] cursor-pointer"
+                  >
+                    <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-[#141420] mb-2.5 border border-white/5">
+                      {target.posterPath ? (
+                        <Image
+                          src={`https://image.tmdb.org/t/p/w300${target.posterPath}`}
+                          alt={target.title}
+                          fill
+                          sizes="(max-width: 768px) 50vw, 25vw"
+                          className="object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-cyan-950/40 flex items-center justify-center text-[10px] font-mono text-cyan-400">
+                          NO POSTER
+                        </div>
+                      )}
+                      
+                      <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-cyan-400/40 text-[9px] font-mono text-cyan-300 font-bold">
+                        {target.match} Match
+                      </div>
+
+                      <div className="absolute bottom-2 left-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-emerald-400/30 text-[9px] font-mono text-emerald-300 truncate max-w-[85%]">
+                        {target.status}
+                      </div>
+                    </div>
+
+                    <div className="px-1">
+                      <h4 
+                        className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-2 h-8 leading-snug"
+                        title={target.title}
+                      >
+                        {target.title}
+                      </h4>
+                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-gray-400">
+                        <span>{target.year}</span>
+                        <button 
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedMovieId(target.id);
+                          }}
+                          className="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+                        >
+                          Film Intel →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-16 text-center border border-cyan-500/20 bg-[#07070d] rounded-2xl p-6">
+                <p className="text-xs font-mono text-gray-400 mb-3">No titles in your watchlist to anchor recommendations.</p>
+                <Link
+                  href="/where-to-watch"
+                  className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold rounded-xl transition-all"
+                >
+                  Explore Films &amp; Add to Watchlist
+                </Link>
+              </div>
+            )}
+          </div>
         )}
 
-        {activeTab === 'Wallet' && (
-          <WalletTab 
-            user={user} userWalletBalance={userWalletBalance} userXp={userXp} 
-            setUserWalletBalance={setUserWalletBalance} showToast={showToast} 
-          />
+        {/* TAB 2: CRITIC REVIEWS */}
+        {activeTab === 'transmissions' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {userReviews.length > 0 ? (
+              userReviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="bg-[#0b0b14] border border-cyan-500/20 rounded-2xl p-4 flex flex-col justify-between space-y-3"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-white truncate">{rev.movieTitle || rev.title}</h4>
+                      <span className="text-xs font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                        ★ {rev.rating}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-300 italic font-light line-clamp-3 leading-relaxed">
+                      &quot;{rev.reviewText || rev.snippet}&quot;
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] font-mono text-gray-400">
+                    <span>Logged in Studio Feed</span>
+                    <span className="text-cyan-400">Verified</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-3 py-16 text-center text-gray-400 font-mono text-xs border border-cyan-500/20 rounded-2xl bg-[#07070d]">
+                No published film reviews recorded yet. Log a review in Global Reviews to earn coins.
+              </div>
+            )}
+          </div>
         )}
 
-        {activeTab === 'Avatar' && (
-          <AvatarTab 
-            user={user} activeTheme={activeTheme} isProUser={isProUser} 
-            avatarUrl={avatarUrl} setAvatarUrl={setAvatarUrl} 
-            showToast={showToast} handleUpgradeToPro={handleStripeCheckout} 
-          />
+        {/* TAB 3: COMMISSARY, WALLET & PROP EQUIPMENT LOCKER */}
+        {activeTab === 'vault' && (
+          <div className="space-y-6">
+            
+            {/* Wallet Overview Box */}
+            <div className="bg-[#0b0b14] border border-cyan-500/20 rounded-3xl p-6 text-center space-y-3 shadow-lg">
+              <div className="w-14 h-14 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center text-2xl mx-auto shadow-inner">
+                🪙
+              </div>
+              <div>
+                <h3 className="text-sm font-mono uppercase tracking-widest text-gray-400">Current Studio Balance</h3>
+                <p className="text-3xl font-black text-amber-400 mt-1">{profileData.walletCoins} Coins Available</p>
+                <p className="text-xs text-gray-400 max-w-md mx-auto pt-1 font-light">
+                  Complete daily call sheets and file reviews to earn coins for prop acquisitions.
+                </p>
+              </div>
+              <div className="pt-2">
+                <Link
+                  href="/armoury"
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-mono font-bold rounded-xl transition-all inline-flex items-center gap-2 shadow-md cursor-pointer active:scale-95"
+                >
+                  <span>Visit The Prop Department &amp; Backlot</span>
+                  <span>→</span>
+                </Link>
+              </div>
+            </div>
+
+            {/* Interactive Equipment Locker */}
+            <div className="bg-[#07070d] border border-cyan-500/25 rounded-3xl p-6 sm:p-7 space-y-5 shadow-xl">
+              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🎬</span>
+                  <h3 className="text-sm font-mono uppercase tracking-widest text-cyan-300 font-bold">
+                    Active Equipment Locker ({profileData.inventory.length} Props Unlocked)
+                  </h3>
+                </div>
+                <span className="text-[10px] font-mono text-gray-400">
+                  Click to Equip / Unequip
+                </span>
+              </div>
+
+              {profileData.inventory.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {profileData.inventory.map((itemId) => {
+                    const isFrame = itemId.startsWith('frame_');
+                    const isTitle = itemId.startsWith('title_');
+                    const equipKey = isFrame ? 'equippedFrame' : isTitle ? 'equippedTitle' : null;
+                    const isEquipped = equipKey ? profileData[equipKey] === itemId : false;
+
+                    const formattedName = itemId
+                      .replace(/^(frame_|title_|theme_)/, '')
+                      .replace(/_/g, ' ')
+                      .toUpperCase();
+
+                    return (
+                      <div 
+                        key={itemId}
+                        className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${
+                          isEquipped 
+                            ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.25)]' 
+                            : 'bg-[#0d0d16] border-white/5 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-white block">
+                            {isFrame ? `🎞️ ${formattedName} FRAME` : isTitle ? `🏷️ [${formattedName}]` : `⚡ ${formattedName}`}
+                          </span>
+                          <span className="text-[10px] font-mono text-gray-400 block">
+                            {isFrame ? 'Avatar Film Reel Border' : isTitle ? 'Opening Screen Credit' : 'Studio Asset'}
+                          </span>
+                        </div>
+
+                        {equipKey ? (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEquip(itemId, equipKey)}
+                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer ${
+                              isEquipped
+                                ? 'bg-cyan-500 text-black shadow-md hover:bg-cyan-400'
+                                : 'bg-white/5 border border-white/10 hover:border-cyan-400 text-gray-300'
+                            }`}
+                          >
+                            {isEquipped ? '✓ Equipped' : 'Equip'}
+                          </button>
+                        ) : (
+                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="py-12 text-center text-xs font-mono text-gray-500 border border-dashed border-white/10 rounded-2xl p-6">
+                  No props or cosmetics acquired yet. Requisition items in the Prop Department using Studio Coins.
+                </div>
+              )}
+            </div>
+
+          </div>
         )}
 
-        {activeTab === 'Reviews' && (
-          <ReviewsTab 
-            user={user} activeTheme={activeTheme} reviews={reviews} showToast={showToast} 
-          />
-        )}
+      </div>
 
-        {activeTab === 'Settings' && (
-          <SettingsTab 
-            userFaction={userFaction} isProUser={isProUser} activeTheme={activeTheme} accentPresets={ACCENT_PRESETS}
-            displayNameInput={displayNameInput} setDisplayNameInput={setDisplayNameInput}
-            userRank={userRank} setUserRank={setUserRank}
-            bioTagline={bioTagline} setBioTagline={setBioTagline}
-            accentColor={accentColor} setAccentColor={setAccentColor}
-            compactMode={compactMode} setCompactMode={setCompactMode}
-            hoverGlow={hoverGlow} setHoverGlow={setHoverGlow}
-            ambientBackdrop={ambientBackdrop} setAmbientBackdrop={setAmbientBackdrop}
-            defaultReviewPublic={defaultReviewPublic} setDefaultReviewPublic={setDefaultReviewPublic}
-            handleSaveSettings={handleSaveSettings} isSaving={isSaving} handleLogout={handleLogout}
-          />
-        )}
+      {/* Direct Modal Overlay */}
+      {selectedMovieId && (
+        <MovieModal
+          movieId={selectedMovieId}
+          onClose={() => setSelectedMovieId(null)}
+        />
+      )}
 
-        {activeTab === 'Pro Analytics' && isProUser && (
-           <div className="p-10 bg-[#0f0f0f]/80 min-h-[400px] text-white">
-             <h2 className="text-sm font-black mb-8 text-amber-400 uppercase tracking-widest">VIP Analytics Overview</h2>
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-               <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">Total Transmissions</p>
-                 <p className="text-4xl font-black text-amber-500">{reviews.length}</p>
-               </div>
-               <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">Studio Token Reserves</p>
-                 <p className="text-4xl font-black text-white font-mono">{userWalletBalance} 🪙</p>
-               </div>
-               <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">Account Status</p>
-                 <p className="text-xl font-black text-green-400 mt-2">Active Premium</p>
-               </div>
-             </div>
-             <p className="text-gray-500 text-sm border-t border-white/5 pt-6">Advanced algorithmic genre targeting and watch-time telemetry will be deployed in the next orbital patch.</p>
-           </div>
-        )}
-      </main>
     </div>
   );
 }

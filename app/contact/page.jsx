@@ -25,7 +25,7 @@ export default function ContactPage() {
       } else {
         setStatus('Transmission failed. Re-try uplink.');
       }
-    } catch (err) {
+    } catch {
       setStatus('Network interference detected.');
     }
   };

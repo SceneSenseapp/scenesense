@@ -1,39 +1,30 @@
-export default function PrivacyPolicyPage() {
+// app/privacy/page.jsx
+import Link from 'next/link';
+
+export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-[#050505] text-white p-6 sm:p-16 font-sans">
-      <div className="max-w-3xl mx-auto space-y-8">
-        <div>
-          <span className="text-xs font-mono text-red-500 uppercase tracking-widest">Legal Telemetry</span>
-          <h1 className="text-3xl font-black mt-1">Privacy Policy</h1>
-          <p className="text-xs text-gray-400 mt-1">Last Updated: October 3, 2026</p>
-        </div>
+    <div className="min-h-screen bg-[#050508] text-slate-200 px-6 py-16 flex justify-center">
+      <div className="max-w-3xl w-full bg-[#0a0a14] border border-cyan-500/20 rounded-2xl p-8 md:p-12 shadow-2xl relative">
+        <Link 
+          href="/" 
+          className="inline-flex items-center gap-2 text-xs font-mono text-cyan-400 hover:text-cyan-300 transition-colors mb-8"
+        >
+          ← Return to Studio Radar
+        </Link>
 
-        <section className="space-y-4 text-xs text-gray-300 leading-relaxed">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">1. Information We Collect</h2>
+        <h1 className="text-3xl font-black text-white tracking-tight mb-6">
+          Privacy Policy
+        </h1>
+        
+        <div className="space-y-6 text-sm text-slate-300 leading-relaxed font-light">
           <p>
-            SceneSense Studio (&ldquo;we,&rdquo; &ldquo;our,&rdquo; or &ldquo;us&rdquo;) collects personal information that you voluntarily provide when registering an account, such as your email address and authentication credentials via Firebase. We also log your search history, director personas, and saved film watchlists to deliver personalized cinematic recommendations.
+            SceneSense handles user telemetry strictly for authentication, watchlist curation, and localized search experience optimization.
           </p>
-
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">2. Use of Third-Party APIs</h2>
           <p>
-            Our platform queries the The Movie Database (TMDb) API to retrieve film posters, release dates, synopses, and streaming provider availability. No personal user data is transmitted to TMDb during these requests.
+            We do not monetize or distribute personal user identifiers to unauthorized external third parties.
           </p>
-
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">3. Payment Processing</h2>
-          <p>
-            All VIP subscriptions and financial transactions are handled securely through Stripe. We do not store or process your credit card numbers on our local servers. Please review Stripe&rsquo;s privacy policy for details on their data handling practices.
-          </p>
-
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">4. Data Security</h2>
-          <p>
-            We employ industry-standard encryption and Firebase security protocols to safeguard your account data. However, no data transmission over the internet is 100% secure.
-          </p>
-        </section>
-
-        <div className="pt-6 border-t border-white/10">
-          <a href="/" className="text-xs text-red-400 hover:underline font-bold">&larr; Return to SceneSense Studio</a>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

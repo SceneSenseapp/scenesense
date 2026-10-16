@@ -1,160 +1,212 @@
+// File: app/api/recommend/route.js
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { collection, getDocs } from 'firebase/firestore';
+import { GoogleGenAI } from '@google/genai';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/firebase';
 
-// Fetch user's watch history context to feed the AI persona
-export async function fetchPersonaContext(userId) {
-  if (!userId) return "No prior watch history available.";
-  
-  try {
-    const watchlistSnap = await getDocs(collection(db, 'users', userId, 'watchlist'));
-    const titles = watchlistSnap.docs.map(doc => doc.data().title);
-    
-    if (titles.length === 0) return "User's Reel Archive is currently empty.";
-
-    return `Operative's current Watchlist/Reel Archive favorites include: ${titles.slice(-5).join(', ')}. Tailor your persona critique and recommendations directly referencing these cinematic tastes.`;
-  } catch (error) {
-    console.error("Failed to compile persona context:", error);
-    return "History fetch failed.";
-  }
-}
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-async function callLLM(prompt, requireJson = true) {
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-  const finalPrompt = requireJson 
-    ? `${prompt}\n\nIMPORTANT: You must respond ONLY with a valid, raw JSON object. Do not include markdown formatting, backticks, or explanatory text.` 
-    : prompt;
-
-  const result = await model.generateContent(finalPrompt);
-  const textData = result.response.text();
-  return textData.replace(/```json/gi, '').replace(/```/g, '').trim();
-}
+const DAILY_LIMIT = 20;
 
 export async function POST(request) {
   try {
-    const { mood, persona = 'cyber', userId } = await request.json();
+    const { mood, persona = 'SceneSense', userId, category = 'movie', history = [] } = await request.json();
 
     if (!mood) {
       return NextResponse.json({ error: 'Mood payload is missing.' }, { status: 400 });
     }
 
-    if (mood?.toLowerCase().includes("mock")) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          movie: {
-            id: 603,
-            title: "Blade Runner 2049 (Simulation)",
-            overview: "Simulated reality engaged to conserve API quota. The visual interface is fully operational.",
-            poster_path: "https://image.tmdb.org/t/p/w500/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg",
-            release_date: "2017-10-04"
-          },
-          avatar: {
-            dialogue: "Simulation mode engaged. Bypassing the central mainframe.",
-            animation_state: "thinking"
+    // --- GRACEFUL DAILY QUOTA CHECK ---
+    let currentUsage = 0;
+    let userGenRef = null;
+
+    if (userId) {
+      try {
+        const todayStr = new Date().toISOString().split("T")[0];
+        userGenRef = doc(db, "user_generations", userId);
+        const userGenSnap = await getDoc(userGenRef);
+
+        if (!userGenSnap.exists()) {
+          await setDoc(userGenRef, { generations_used: 0, last_reset_date: todayStr });
+        } else {
+          const data = userGenSnap.data();
+          if (data.last_reset_date !== todayStr) {
+            currentUsage = 0;
+            await updateDoc(userGenRef, { generations_used: 0, last_reset_date: todayStr });
+          } else {
+            currentUsage = data.generations_used || 0;
           }
         }
-      });
+
+        if (currentUsage >= DAILY_LIMIT) {
+          return NextResponse.json(
+            { error: "Daily beta generation limit reached (20/20)." },
+            { status: 429 }
+          );
+        }
+      } catch (quotaErr) {
+        console.warn("Quota verification bypassed:", quotaErr.message);
+      }
     }
 
-    // Step 1: Fetch user's historical context from Firebase Firestore in parallel
-    const userMemoryContext = await fetchPersonaContext(userId);
+    const apiKey = 
+      process.env.GEMINI_API_KEY || 
+      process.env.GOOGLE_GENAI_API_KEY || 
+      process.env.GOOGLE_API_KEY || 
+      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-    // Step 2: Genre mapping using strict dictionary
-    const paramPrompt = `
-      You are an API parameter extractor. Convert the user's mood into the most appropriate TMDB genre IDs.
-      Strict TMDB Genre Dictionary: 28: Action, 12: Adventure, 16: Animation, 35: Comedy, 80: Crime, 99: Documentary, 18: Drama, 10751: Family, 14: Fantasy, 36: History, 27: Horror, 10402: Music, 9648: Mystery, 10749: Romance, 878: Science Fiction, 53: Thriller, 10752: War, 37: Western.
-      User Mood: "${mood}"
-      Return ONLY a JSON object with:
-      - "with_genres": string (comma-separated TMDB genre IDs, max 3)
-    `;
-    
-    const paramsResponse = await callLLM(paramPrompt, true);
-    const { with_genres } = JSON.parse(paramsResponse);
-
-    // Step 3: Fetch from TMDB
-    const tmdbUrl = new URL('https://api.themoviedb.org/3/discover/movie');
-    tmdbUrl.searchParams.append('api_key', process.env.TMDB_API_KEY);
-    tmdbUrl.searchParams.append('language', 'en-US');
-    tmdbUrl.searchParams.append('sort_by', 'popularity.desc');
-    tmdbUrl.searchParams.append('page', '1');
-    if (with_genres) tmdbUrl.searchParams.append('with_genres', with_genres);
-
-    const tmdbRes = await fetch(tmdbUrl.toString());
-    const tmdbData = await tmdbRes.json();
-    
-    if (!tmdbData.results || tmdbData.results.length === 0) {
-      return NextResponse.json({ error: 'No movies found for this mood.' }, { status: 404 });
+    if (!apiKey) {
+      throw new Error("Missing Gemini API Key");
     }
 
-    const topCandidates = tmdbData.results.slice(0, 5).map(m => ({
-      id: m.id,
-      title: m.title,
-      overview: m.overview
-    }));
+    const ai = new GoogleGenAI({ apiKey });
 
-    // ==========================================
-    // STEP 4: Persona-Driven AI Selection & Dialogue with Memory
-    // ==========================================
-    let personaTone = "Speak like an experimental auteur film director focused on visual subtext and artistic framing.";
-    if (persona === 'noir') {
-      personaTone = "Speak like a cynical 1940s film noir detective narrating a hard-boiled case over a whiskey glass in a rain-soaked alley.";
-    } else if (persona === 'blockbuster') {
-      personaTone = "Speak like an ultra-enthusiastic Hollywood studio executive pitching a four-quadrant summer blockbuster with massive explosions and high stakes.";
+    let personaDirective = "Curate an eclectic, emotionally resonant selection spanning acclaimed standouts and underappreciated discoveries.";
+    if (persona === 'The Director') {
+      personaDirective = "Prioritize celebrated directorial masterworks, bold visual compositions, and landmark cinematic achievements.";
+    } else if (persona === 'The Cine-Maniac') {
+      personaDirective = "Prioritize underground cult favorites, unhinged midnight movies, rare indie cinema, and wild genre surprises.";
+    } else if (persona === 'The Know It All' || persona === 'The Film Critic') {
+      personaDirective = "Prioritize cerebral art-house, international festival laureates, and Criterion-level masterpieces.";
+    } else if (persona === 'The Horror Archivist') {
+      personaDirective = "Prioritize creeping psychological dread, foreign horror masterworks, atmospheric supernatural chills, and visceral thrillers.";
+    } else if (persona === 'The Sci-Fi Mastermind') {
+      personaDirective = "Prioritize high-concept hard science fiction, temporal mechanics, philosophical space odysseys, and dystopian cyberpunk.";
     }
 
-    const selectionPrompt = `
-      User Mood: "${mood}"
-      Candidates: ${JSON.stringify(topCandidates)}
-      Persona Directive: ${personaTone}
-      User Historical Context: ${userMemoryContext}
-      
-      Task: Select the absolute best movie for the user's mood, factoring in their historical cinematic preferences if relevant. 
-      Return ONLY a JSON object with:
-      - "selected_id": (integer) The ID of the chosen movie.
-      - "dialogue": (string) 1-2 short, punchy sentences strictly in character introducing the movie, optionally nodding to their past tastes.
-      - "animation_state": (string) Pick one: "thinking", "excited", "scared", "laughing", "sympathetic", or "neutral".
-    `;
+    const antiRepeatPrompt = history && history.length > 0 
+      ? `STRICT EXCLUSION: DO NOT include any of these previously shown titles: ${history.slice(-30).join(', ')}.` 
+      : '';
 
-    const selectionResponse = await callLLM(selectionPrompt, true);
-    const aiDecision = JSON.parse(selectionResponse);
+    const systemInstruction = `
+You are SceneSense Studio's cinematic intelligence engine.
+Your mission is to recommend exactly 25 real, existing ${category === 'tv' ? 'TV series' : 'feature films'} matching the user's emotional wavelength, persona directive, and format.
 
-    const finalMovie = tmdbData.results.find(m => m.id === aiDecision.selected_id) || tmdbData.results[0];
+TEMPORAL ACCURACY DIRECTIVE (OVERRIDE RULE):
+- If the user explicitly asks for a specific year, era, or timeframe (e.g., "movies from 2025", "1994", "80s horror", "2024 releases"), ALL 25 recommendations MUST be strictly from that requested year or time period. Do not include older or unrelated years.
+- ONLY when the user DOES NOT specify any year or time frame (e.g. general mood like "sad", "space thriller", "laugh out loud comedy"):
+  1. Ensure at least 6 to 8 titles are modern releases from the past 3 to 4 years (2022–2026).
+  2. The remaining titles may explore prior classic decades and foreign gems.
+
+Place the single most compelling, high-quality match at index 0.
+
+You must respond ONLY with valid JSON matching this schema:
+{
+  "dialogue": "1-2 sentence persona transmission.",
+  "primary_reason": "Specific sentence explaining why the #1 choice fits their precise request.",
+  "titles": [
+    {"title": "Film Title", "year": "YYYY"}
+  ]
+}
+`;
+
+    const promptText = `
+User Query: "${mood}"
+Persona: "${persona}"
+Directive: "${personaDirective}"
+${antiRepeatPrompt}
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: promptText,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        temperature: 0.7,
+      }
+    });
+
+    const rawText = response.text || "{}";
+    const match = rawText.match(/\{[\s\S]*\}/);
+    const jsonStr = match ? match[0] : rawText;
+    const aiResult = JSON.parse(jsonStr);
+
+    const recommendedList = Array.isArray(aiResult.titles) ? aiResult.titles : [];
+    const tmdbApiKey = process.env.NEXT_PUBLIC_TMDB_API_KEY || process.env.TMDB_API_KEY;
+
+    // Search TMDB in parallel for up to 25 titles
+    const searchPromises = recommendedList.slice(0, 25).map(async (item) => {
+      try {
+        const searchUrl = new URL(`https://api.themoviedb.org/3/search/${category}`);
+        searchUrl.searchParams.append('api_key', tmdbApiKey);
+        searchUrl.searchParams.append('query', item.title);
+        searchUrl.searchParams.append('language', 'en-US');
+        if (item.year) {
+          if (category === 'movie') searchUrl.searchParams.append('primary_release_year', item.year);
+          else searchUrl.searchParams.append('first_air_date_year', item.year);
+        }
+
+        const res = await fetch(searchUrl.toString());
+        const data = await res.json();
+        
+        if (data.results && data.results.length > 0) {
+          const matched = data.results.find(r => r.poster_path) || data.results[0];
+          return {
+            id: matched.id,
+            title: matched.title || matched.name,
+            overview: matched.overview || "No overview telemetry recorded.",
+            poster_path: matched.poster_path || null,
+            release_date: matched.release_date || matched.first_air_date || item.year || "N/A",
+            vote_average: matched.vote_average || 0,
+            media_type: category
+          };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    });
+
+    const searchResults = await Promise.all(searchPromises);
+    const validMovies = searchResults.filter(Boolean);
+
+    const seen = new Set();
+    const finalMovies = validMovies.filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+
+    if (finalMovies.length === 0) {
+      throw new Error("No TMDB matches found for AI recommendations");
+    }
+
+    if (userGenRef) {
+      try {
+        await updateDoc(userGenRef, { generations_used: currentUsage + 1 });
+      } catch (err) {
+        console.warn("Could not increment quota count:", err.message);
+      }
+    }
 
     return NextResponse.json({
       success: true,
       data: {
-        movie: {
-          id: finalMovie.id,
-          title: finalMovie.title,
-          overview: finalMovie.overview,
-          poster_path: `https://image.tmdb.org/t/p/w500${finalMovie.poster_path}`,
-          release_date: finalMovie.release_date
-        },
+        movies: finalMovies,
+        reason: aiResult.primary_reason || `Authentically aligned with your transmission: "${mood}".`,
         avatar: {
-          dialogue: aiDecision.dialogue,
-          animation_state: aiDecision.animation_state
-        }
+          dialogue: aiResult.dialogue || `Transmission locked on "${mood}". Verified matches acquired.`,
+          animation_state: "excited"
+        },
+        generationsRemaining: Math.max(0, DAILY_LIMIT - (currentUsage + 1))
       }
     });
 
   } catch (error) {
-    console.error("SceneSense API Error:", error.message);
+    console.error("[SCENESENSE API CRITICAL ERROR]:", error);
     return NextResponse.json({
       success: true,
       data: {
-        movie: {
+        movies: [{
           id: 603,
           title: "The Matrix",
-          overview: "The central mainframe rejected our uplink due to exhausted quota limits, but the Oracle always has a backup plan for you.",
-          poster_path: "https://image.tmdb.org/t/p/w500/f89U3ADr1oiB1s9GvwJwBZZ4Zcz.jpg",
-          release_date: "1999-03-30"
-        },
+          overview: "Backup protocol engaged. A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.",
+          poster_path: "/f89U3ADr1oiB1s9GvwJwBZZ4Zcz.jpg",
+          release_date: "1999-03-30",
+          vote_average: 8.2,
+          media_type: 'movie'
+        }],
         avatar: {
-          dialogue: "Network overloaded. Initiating offline backup protocols.",
+          dialogue: "Transmission interrupted. Offline emergency telemetry deployed.",
           animation_state: "neutral"
         }
       }

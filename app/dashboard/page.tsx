@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { collection, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, Timestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
 
 interface Movie {
@@ -12,7 +13,7 @@ interface Movie {
   title: string;
   poster_path?: string;
   overview?: string;
-  savedAt?: any;
+  savedAt?: Timestamp | Date | string | null;
 }
 
 export default function DashboardPage() {
@@ -20,6 +21,26 @@ export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [watchlist, setWatchlist] = useState<Movie[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Pull the saved targets from Firestore - declared before useEffect
+  const fetchWatchlist = useCallback(async (uid: string) => {
+    try {
+      const q = query(
+        collection(db, 'users', uid, 'watchlist'),
+        orderBy('savedAt', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      const movies = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Movie));
+      setWatchlist(movies);
+    } catch (error) {
+      console.error("Failed to decrypt database:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   // Secure the route: Boot unauthenticated users back to the scanner
   useEffect(() => {
@@ -32,24 +53,7 @@ export default function DashboardPage() {
       }
     });
     return () => unsubscribe();
-  }, [router]);
-
-  // Pull the saved targets from Firestore
-  const fetchWatchlist = async (uid: string) => {
-    try {
-      const q = query(
-        collection(db, 'users', uid, 'watchlist'),
-        orderBy('savedAt', 'desc')
-      );
-      const snapshot = await getDocs(q);
-      const movies = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Movie));
-      setWatchlist(movies);
-    } catch (error) {
-      console.error("Failed to decrypt database:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [router, fetchWatchlist]);
 
   const handleSignOut = async () => {
     await signOut(auth);
@@ -102,11 +106,16 @@ export default function DashboardPage() {
             {watchlist.map((movie) => (
               <div key={movie.id} className="bg-[#141414] rounded-lg overflow-hidden border border-white/10 hover:border-red-500 transition-all duration-300 group shadow-lg">
                 {movie.poster_path ? (
-                  <img 
-                    src={movie.poster_path} 
-                    alt={movie.title} 
-                    className="w-full h-72 object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                  />
+                  <div className="relative w-full h-72">
+                    <Image 
+                      src={movie.poster_path} 
+                      alt={movie.title} 
+                      fill
+                      unoptimized
+                      sizes="(max-width: 768px) 50vw, (max-width: 1200px) 25vw, 20vw"
+                      className="object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                    />
+                  </div>
                 ) : (
                   <div className="w-full h-72 bg-[#1a1a1a] flex items-center justify-center text-gray-600">
                     No Image Found

@@ -1,39 +1,32 @@
+// app/dmca/page.jsx
+import Link from 'next/link';
+
 export default function DmcaPage() {
   return (
-    <main className="min-h-screen bg-[#050505] text-white p-6 sm:p-16 font-sans">
-      <div className="max-w-3xl mx-auto space-y-8">
-        <div>
-          <span className="text-xs font-mono text-red-500 uppercase tracking-widest">Legal Telemetry</span>
-          <h1 className="text-3xl font-black mt-1">DMCA Takedown Policy</h1>
-          <p className="text-xs text-gray-400 mt-1">Last Updated: October 3, 2026</p>
-        </div>
+    <div className="min-h-screen bg-[#050508] text-slate-200 px-6 py-16 flex justify-center">
+      <div className="max-w-3xl w-full bg-[#0a0a14] border border-cyan-500/20 rounded-2xl p-8 md:p-12 shadow-2xl relative">
+        <Link 
+          href="/" 
+          className="inline-flex items-center gap-2 text-xs font-mono text-cyan-400 hover:text-cyan-300 transition-colors mb-8"
+        >
+          ← Return to Studio Radar
+        </Link>
 
-        <section className="space-y-4 text-xs text-gray-300 leading-relaxed">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">1. Copyright Infringement Notification</h2>
+        <h1 className="text-3xl font-black text-white tracking-tight mb-6">
+          DMCA Notice &amp; Copyright Policy
+        </h1>
+        
+        <div className="space-y-6 text-sm text-slate-300 leading-relaxed font-light">
           <p>
-            SceneSense Studio respects the intellectual property rights of others. If you believe that any content hosted on scenesense.ai infringes upon your copyright, you may submit a Digital Millennium Copyright Act (DMCA) takedown notice.
+            SceneSense respects intellectual property rights. If you believe your copyrighted material is referenced or displayed in an unauthorized manner, submit a formal takedown request containing the following:
           </p>
-
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">2. Required Notice Elements</h2>
-          <p>To file a notice, please provide our designated copyright agent with the following information in writing:</p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li>An electronic or physical signature of the person authorized to act on behalf of the owner.</li>
-            <li>Identification of the copyrighted work claimed to have been infringed.</li>
-            <li>The exact URL or location on SceneSense where the material appears.</li>
-            <li>Your contact information (address, telephone number, and email address).</li>
-            <li>A statement that you have a good faith belief that the disputed use is not authorized by the copyright owner.</li>
+          <ul className="list-disc list-inside space-y-2 text-slate-400">
+            <li>Identification of the copyrighted material claimed to have been infringed.</li>
+            <li>Direct URL or location of the alleged infringing content.</li>
+            <li>Your contact telemetry (name, email address, physical address).</li>
           </ul>
-
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">3. Contact Agent</h2>
-          <p>
-            DMCA notices can be transmitted directly to our administrative desk at: <strong className="text-white">legal@scenesense.ai</strong>
-          </p>
-        </section>
-
-        <div className="pt-6 border-t border-white/10">
-          <a href="/" className="text-xs text-red-400 hover:underline font-bold">&larr; Return to SceneSense Studio</a>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

@@ -18,7 +18,9 @@ export function useWatchlist() {
 
   useEffect(() => {
     if (!user) {
-      setWatchlist([]);
+      queueMicrotask(() => {
+        setWatchlist([]);
+      });
       return;
     }
     
@@ -32,7 +34,7 @@ export function useWatchlist() {
     return () => unsubscribe();
   }, [user]);
 
-  const saveToWatchlist = async (movie) => {
+  const saveToWatchlist = async (movie, categoryTag = 'Must Watch Tonight') => {
     if (!user) {
       toast.error("You must be logged in to save movies.", {
         style: { background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a' }
@@ -46,7 +48,8 @@ export function useWatchlist() {
         watched: movie.watched ?? false,
         userRating: movie.userRating ?? null,
         userReview: movie.userReview ?? "",
-        addedAt: movie.addedAt || Date.now() // The temporal anchor required for daily quests
+        categoryTag: categoryTag,
+        addedAt: movie.addedAt || Date.now()
       }, { merge: true });
       
       toast.success(`${movie.title} saved to watchlist!`, {
@@ -73,6 +76,23 @@ export function useWatchlist() {
     } catch (error) {
       console.error("Error removing movie from Firebase:", error);
       toast.error("Failed to remove movie.", {
+        style: { background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a' }
+      });
+    }
+  };
+
+  const updateMovieCategory = async (movieId, newTag) => {
+    if (!user) return;
+    try {
+      const movieRef = doc(db, 'users', user.uid, 'watchlist', movieId.toString());
+      await setDoc(movieRef, { categoryTag: newTag }, { merge: true });
+      toast.success(`Moved to folder: ${newTag}`, {
+        icon: '📁',
+        style: { background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a' }
+      });
+    } catch (error) {
+      console.error("Error updating category folder:", error);
+      toast.error("Failed to update folder.", {
         style: { background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a' }
       });
     }
@@ -124,5 +144,5 @@ export function useWatchlist() {
     }
   };
 
-  return { watchlist, saveToWatchlist, removeFromWatchlist, toggleWatched, saveReview };
+  return { watchlist, saveToWatchlist, removeFromWatchlist, updateMovieCategory, toggleWatched, saveReview };
 }
