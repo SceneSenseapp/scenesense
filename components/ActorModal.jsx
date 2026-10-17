@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import ReviewModal from '@/components/ReviewModal';
 
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 
@@ -20,6 +21,9 @@ export default function ActorModal({
   const [personCredits, setPersonCredits] = useState([]);
   const [backdropPath, setBackdropPath] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Global Review Modal Toggle State
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   const router = useRouter();
 
@@ -157,10 +161,7 @@ export default function ActorModal({
           <div className="flex items-center gap-2.5 flex-wrap">
             <button
               type="button"
-              onClick={() => {
-                onClose();
-                router.push(`/reviews?personName=${encodeURIComponent(personData?.name || '')}`);
-              }}
+              onClick={() => setIsReviewModalOpen(true)}
               className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-md shadow-cyan-500/20 cursor-pointer active:scale-95"
             >
               <span>✍️</span>
@@ -311,6 +312,18 @@ export default function ActorModal({
         )}
 
       </div>
+
+      {/* Global Review Modal Integration */}
+      {isReviewModalOpen && personData && (
+        <ReviewModal
+          targetId={personData.id}
+          targetTitle={personData.name}
+          posterPath={personData.profile_path}
+          mediaType="person"
+          onClose={() => setIsReviewModalOpen(false)}
+        />
+      )}
+
     </div>
   );
 }

@@ -7,12 +7,15 @@ import Image from 'next/image';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import MovieModal from '@/components/MovieModal';
 
+const ITEMS_PER_PAGE = 12;
+
 export default function WatchlistPage() {
   const { watchlist, removeFromWatchlist } = useWatchlist();
   const [filter, setFilter] = useState('all'); // 'all' | 'watched' | 'unwatched'
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('name-asc');
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
+  const [viewMode, setViewMode] = useState('list'); // 'grid' | 'list'
+  const [currentPage, setCurrentPage] = useState(1);
   const [selectedMovieId, setSelectedMovieId] = useState(null);
   const [watchedMap, setWatchedMap] = useState({});
   const router = useRouter();
@@ -41,6 +44,11 @@ export default function WatchlistPage() {
       return updated;
     });
   };
+
+  // Reset to page 1 whenever filters or search query change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, search, sortBy, viewMode]);
 
   const filteredItems = useMemo(() => {
     let result = [...(watchlist || [])];
@@ -72,6 +80,13 @@ export default function WatchlistPage() {
 
     return result;
   }, [watchlist, filter, search, sortBy, watchedMap]);
+
+  // Paginated slice
+  const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE) || 1;
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredItems.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredItems, currentPage]);
 
   const totalCount = (watchlist || []).length;
   const watchedCount = (watchlist || []).filter(item => watchedMap[item.id]).length;
@@ -192,112 +207,243 @@ export default function WatchlistPage() {
         </div>
       </div>
 
-      {/* TITLES GRID */}
-      {filteredItems.length > 0 ? (
-        <div className={viewMode === 'grid' 
-          ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 relative z-10" 
-          : "flex flex-col gap-3 relative z-10"
-        }>
-          {filteredItems.map((item) => {
-            const isDone = Boolean(watchedMap[item.id]);
-            const displayTitle = item.title || item.name || 'Untitled';
+      {/* TITLES CONTAINER (PAGINATED GRID OR LIST VIEW) */}
+      {paginatedItems.length > 0 ? (
+        <div className="flex-1 flex flex-col justify-between">
+          {viewMode === 'grid' ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 relative z-10">
+              {paginatedItems.map((item) => {
+                const isDone = Boolean(watchedMap[item.id]);
+                const displayTitle = item.title || item.name || 'Untitled';
 
-            return (
-              <div 
-                key={item.id}
-                className={`bg-[#0e0e16] border rounded-2xl overflow-hidden flex flex-col justify-between group transition-all duration-300 shadow-lg relative ${
-                  isDone 
-                    ? 'border-emerald-500/40 bg-[#06100c]/60 shadow-[0_4px_20px_rgba(16,185,129,0.15)]' 
-                    : 'border-cyan-500/20 hover:border-cyan-400 hover:shadow-[0_10px_30px_rgba(6,182,212,0.2)] hover:-translate-y-1'
-                }`}
-              >
-                {/* Poster & Badges Container */}
-                <div 
-                  onClick={() => setSelectedMovieId(item.id)}
-                  className="cursor-pointer"
-                >
-                  <div className="relative aspect-[2/3] w-full bg-[#141420] overflow-hidden">
-                    {item.poster_path ? (
-                      <Image
-                        src={`https://image.tmdb.org/t/p/w500${item.poster_path}`}
-                        alt={displayTitle}
-                        fill
-                        sizes="(max-width: 768px) 100vw, 200px"
-                        className={`object-cover transition-all duration-500 ${
-                          isDone ? 'grayscale-40 opacity-80' : 'group-hover:scale-105'
-                        }`}
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-xs text-gray-500 p-2 text-center font-mono">
-                        {displayTitle}
+                return (
+                  <div 
+                    key={item.id}
+                    className={`bg-[#0e0e16] border rounded-2xl overflow-hidden flex flex-col justify-between group transition-all duration-300 shadow-lg relative ${
+                      isDone 
+                        ? 'border-emerald-500/40 bg-[#06100c]/60 shadow-[0_4px_20px_rgba(16,185,129,0.15)]' 
+                        : 'border-cyan-500/20 hover:border-cyan-400 hover:shadow-[0_10px_30px_rgba(6,182,212,0.2)] hover:-translate-y-1'
+                    }`}
+                  >
+                    <div 
+                      onClick={() => setSelectedMovieId(item.id)}
+                      className="cursor-pointer"
+                    >
+                      <div className="relative aspect-[2/3] w-full bg-[#141420] overflow-hidden">
+                        {item.poster_path ? (
+                          <Image
+                            src={`https://image.tmdb.org/t/p/w500${item.poster_path}`}
+                            alt={displayTitle}
+                            fill
+                            sizes="(max-width: 768px) 100vw, 200px"
+                            className={`object-cover transition-all duration-500 ${
+                              isDone ? 'grayscale-40 opacity-80' : 'group-hover:scale-105'
+                            }`}
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-xs text-gray-500 p-2 text-center font-mono">
+                            {displayTitle}
+                          </div>
+                        )}
                       </div>
-                    )}
 
-                    {/* Star Rating Badge (Moved left of the X button) */}
-                    <div className="absolute top-2.5 right-10 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-lg text-[10px] font-black text-amber-400 border border-amber-500/30 shadow-lg z-10">
-                      ★ {item.vote_average ? Number(item.vote_average).toFixed(1) : 'N/A'}
+                      <div className="p-3.5 pb-2">
+                        <h3 
+                          className="font-bold text-xs line-clamp-2 h-8 leading-snug text-white group-hover:text-cyan-300 transition-colors flex items-start" 
+                          title={displayTitle}
+                        >
+                          {displayTitle}
+                        </h3>
+                        <div className="flex items-center justify-between mt-2 text-[10px] font-mono text-gray-400">
+                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                            <span>★</span> {item.vote_average ? Number(item.vote_average).toFixed(1) : 'N/A'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFromWatchlist(item.id);
+                            }}
+                            className="text-gray-500 hover:text-red-400 transition-colors cursor-pointer"
+                            title="Remove from Watchlist"
+                          >
+                            Remove ✕
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
-                    {/* Floating Delete Button on Poster */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFromWatchlist(item.id);
-                      }}
-                      className="absolute top-2.5 right-2.5 w-6 h-6 rounded-lg bg-black/85 hover:bg-red-950/90 border border-white/20 hover:border-red-500/50 text-gray-300 hover:text-red-400 text-xs flex items-center justify-center transition-all cursor-pointer z-20 shadow-md"
-                      title="Remove from Watchlist"
-                    >
-                      ✕
-                    </button>
+                    <div className="p-3 pt-0 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMovieId(item.id)}
+                        className="w-full py-2 px-1 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95 text-center truncate"
+                      >
+                        ▶ Details
+                      </button>
 
-                    {/* Watched Banner Overlay */}
-                    {isDone && (
-                      <div className="absolute top-2.5 left-2.5 bg-emerald-950/90 border border-emerald-400/50 text-emerald-300 px-2 py-0.5 rounded-md text-[9px] font-mono font-bold flex items-center gap-1 shadow-md z-10">
-                        <span>✓</span> Watched
-                      </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={(e) => toggleWatched(item.id, e)}
+                        className={`w-full py-2 px-1 rounded-xl text-[10px] font-mono font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95 truncate ${
+                          isDone
+                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                            : 'bg-[#141420] text-gray-300 border-white/10 hover:border-cyan-400 hover:text-cyan-300'
+                        }`}
+                        title={isDone ? 'Mark as Unwatched' : 'Mark as Watched'}
+                      >
+                        <span>{isDone ? '✓' : '○'}</span>
+                        <span>{isDone ? 'Watched' : 'Watch'}</span>
+                      </button>
+                    </div>
+
                   </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* COMPACT LIST VIEW ROW LAYOUT */
+            <div className="flex flex-col gap-2.5 relative z-10">
+              {paginatedItems.map((item) => {
+                const isDone = Boolean(watchedMap[item.id]);
+                const displayTitle = item.title || item.name || 'Untitled';
+                const releaseYear = (item.release_date || item.first_air_date || '').split('-')[0] || 'N/A';
 
-                  {/* Title with Fixed 2-Line Height */}
-                  <div className="p-3.5 pb-2">
-                    <h3 
-                      className="font-bold text-xs line-clamp-2 h-8 leading-snug text-white group-hover:text-cyan-300 transition-colors flex items-start" 
-                      title={displayTitle}
-                    >
-                      {displayTitle}
-                    </h3>
-                  </div>
-                </div>
-
-                {/* Bottom Actions Bar (2 Equal Columns) */}
-                <div className="p-3 pt-0 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
+                return (
+                  <div 
+                    key={item.id}
                     onClick={() => setSelectedMovieId(item.id)}
-                    className="w-full py-2 px-1 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95 text-center truncate"
-                  >
-                    ▶ Details
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={(e) => toggleWatched(item.id, e)}
-                    className={`w-full py-2 px-1 rounded-xl text-[10px] font-mono font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95 truncate ${
-                      isDone
-                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                        : 'bg-[#141420] text-gray-300 border-white/10 hover:border-cyan-400 hover:text-cyan-300'
+                    className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer group ${
+                      isDone 
+                        ? 'border-emerald-500/40 bg-[#06100c]/70 hover:bg-[#06100c]' 
+                        : 'border-cyan-500/20 bg-[#0e0e16] hover:bg-[#141420] hover:border-cyan-400'
                     }`}
-                    title={isDone ? 'Mark as Unwatched' : 'Mark as Watched'}
                   >
-                    <span>{isDone ? '✓' : '○'}</span>
-                    <span>{isDone ? 'Watched' : 'Watch'}</span>
-                  </button>
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="relative w-10 h-14 rounded-lg overflow-hidden bg-[#141420] shrink-0 border border-cyan-500/20">
+                        {item.poster_path ? (
+                          <Image
+                            src={`https://image.tmdb.org/t/p/w200${item.poster_path}`}
+                            alt={displayTitle}
+                            fill
+                            sizes="40px"
+                            className="object-cover group-hover:scale-105 transition-transform"
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-[10px] text-gray-500 font-mono">🎬</div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-xs text-white group-hover:text-cyan-300 transition-colors truncate uppercase tracking-tight">
+                            {displayTitle}
+                          </h3>
+                          {isDone && (
+                            <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded">
+                              Watched
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-[10px] font-mono text-gray-400 mt-1">
+                          <span>{releaseYear}</span>
+                          <span>•</span>
+                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                            <span>★</span> {item.vote_average ? Number(item.vote_average).toFixed(1) : 'N/A'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedMovieId(item.id);
+                        }}
+                        className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm cursor-pointer"
+                      >
+                        ▶ Details
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => toggleWatched(item.id, e)}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                          isDone
+                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60'
+                            : 'bg-[#141420] text-gray-300 border-white/10 hover:border-cyan-400 hover:text-cyan-300'
+                        }`}
+                      >
+                        <span>{isDone ? '✓' : '○'}</span>
+                        <span>{isDone ? 'Watched' : 'Watch'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFromWatchlist(item.id);
+                        }}
+                        className="w-7 h-7 rounded-lg bg-black/60 hover:bg-red-950/80 border border-white/10 hover:border-red-500/50 text-gray-400 hover:text-red-400 text-xs flex items-center justify-center transition-all cursor-pointer"
+                        title="Remove from Watchlist"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* PAGINATION CONTROLS BAR */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-cyan-500/20 pt-6 mt-8 relative z-10 font-mono text-xs">
+              <span className="text-gray-400">
+                Page <strong className="text-cyan-400">{currentPage}</strong> of <strong className="text-white">{totalPages}</strong> ({filteredItems.length} total titles)
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  className="px-3 py-1.5 bg-[#0e0e16] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 disabled:opacity-40 text-cyan-300 rounded-lg transition-all cursor-pointer"
+                >
+                  ← Previous
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(num => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setCurrentPage(num)}
+                      className={`w-8 h-8 rounded-lg font-bold transition-all cursor-pointer ${
+                        currentPage === num
+                          ? 'bg-cyan-500 text-black shadow-md'
+                          : 'bg-[#0e0e16] text-gray-400 hover:text-white border border-cyan-500/20'
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  ))}
                 </div>
 
+                <button
+                  type="button"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  className="px-3 py-1.5 bg-[#0e0e16] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 disabled:opacity-40 text-cyan-300 rounded-lg transition-all cursor-pointer"
+                >
+                  Next →
+                </button>
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
       ) : (
         <div className="py-32 text-center text-gray-500 text-sm font-mono">

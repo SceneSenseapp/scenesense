@@ -1,17 +1,64 @@
-// app/profile/page.jsx
+// File: app/profile/page.jsx
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import MovieModal from '@/components/MovieModal';
 
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+
+// 40 Strictly Unique Studio & Character Avatars using Stable DiceBear Endpoints
+const AVATAR_PRESETS = [
+  // --- CARTOON & ANIMATED STYLES (10 Unique) ---
+  { label: 'Cyber Anime', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=CyberAnime&backgroundColor=b6e3f4' },
+  { label: 'Vibrant Toon', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=VibrantToon&backgroundColor=c0aede' },
+  { label: '3D Stylized', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Stylized3D&backgroundColor=d1d4f9' },
+  { label: 'Neon Cybertoon', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=NeonToon&backgroundColor=ffd5dc' },
+  { label: 'Retro Anime', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=RetroAnime&backgroundColor=ffdfbf' },
+  { label: 'Graphic Novel', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=GraphicNovel&backgroundColor=92d3f5' },
+  { label: 'Digital Mecha', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=DigitalMecha&backgroundColor=b6f4d2' },
+  { label: 'Comic Artist', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=ComicArtist&backgroundColor=f4b6e3' },
+  { label: 'Voxel Studio', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=VoxelStudio&backgroundColor=f4e8b6' },
+  { label: 'Pop Art', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=PopArtStyle&backgroundColor=e2b6f4' },
+
+  // --- REALISTIC & CINEMATIC STYLES (30 Unique) ---
+  { label: 'Cinematic Noir', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=CinematicNoir&backgroundColor=222222' },
+  { label: 'Director Classic', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=DirectorClassic&backgroundColor=0e1118' },
+  { label: 'Studio Executive', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=StudioExec&backgroundColor=1a202c' },
+  { label: 'Neon Cyberpunk', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=NeonCyberpunk&backgroundColor=06b6d4' },
+  { label: 'Editorial Portrait', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Editorial&backgroundColor=3b82f6' },
+  { label: 'High Contrast', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=HighContrast&backgroundColor=6366f1' },
+  { label: 'Art House', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ArtHouse&backgroundColor=8b5cf6' },
+  { label: 'Sci-Fi Operative', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SciFiOperative&backgroundColor=ec4899' },
+  { label: 'Indie Creator', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=IndieCreator&backgroundColor=f59e0b' },
+  { label: 'Dark Thriller', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=DarkThriller&backgroundColor=10b981' },
+  { label: 'Vintage Film', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=VintageFilm&backgroundColor=374151' },
+  { label: 'Action Hero', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ActionHero&backgroundColor=ef4444' },
+  { label: 'Mystery Lead', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=MysteryLead&backgroundColor=3b0764' },
+  { label: 'Animation Lead', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=AnimationLead&backgroundColor=047857' },
+  { label: 'Screenwriter', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Screenwriter&backgroundColor=b45309' },
+  { label: 'VFX Supervisor', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=VFXSupervisor&backgroundColor=1e3a8a' },
+  { label: 'Sound Designer', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SoundDesigner&backgroundColor=581c87' },
+  { label: 'Cinematographer', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Cinematographer&backgroundColor=065f46' },
+  { label: 'Production Designer', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ProductionDesigner&backgroundColor=9f1239' },
+  { label: 'Colorist', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ColoristMaster&backgroundColor=7c2d12' },
+  { label: 'Studio Mogul', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=StudioMogul&backgroundColor=312e81' },
+  { label: 'Stunt Coordinator', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=StuntCoord&backgroundColor=831843' },
+  { label: 'Gaffer', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=GafferLighting&backgroundColor=14532d' },
+  { label: 'Lead Actor', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=LeadActor&backgroundColor=78350f' },
+  { label: 'Casting Director', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=CastingDirector&backgroundColor=3f3f46' },
+  { label: 'Costume Lead', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=CostumeLead&backgroundColor=4c1d95' },
+  { label: 'Prop Master', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=PropMaster&backgroundColor=134e4a' },
+  { label: 'Location Scout', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=LocationScout&backgroundColor=701a75' },
+  { label: 'Boom Operator', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=BoomOperator&backgroundColor=1e293b' },
+  { label: 'Key Grip', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=KeyGripCrew&backgroundColor=451a03' }
+];
 
 export default function ProfileDashboardPage() {
   const [user, setUser] = useState(null);
@@ -34,6 +81,11 @@ export default function ProfileDashboardPage() {
   const [isLoadingRecs, setIsLoadingRecs] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [claimingId, setClaimingId] = useState(null);
+
+  // Avatar Editor State & Modal Toggle
+  const [customAvatarUrl, setCustomAvatarUrl] = useState('');
+  const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
 
   // Modal State
   const [selectedMovieId, setSelectedMovieId] = useState(null);
@@ -244,6 +296,47 @@ export default function ProfileDashboardPage() {
     }
   };
 
+  // Handler for Updating Avatar (Presets, Custom URL, or Local File)
+  const handleApplyAvatar = async (imageUrl) => {
+    if (!imageUrl || !imageUrl.trim() || !auth.currentUser) return;
+    setIsUpdatingAvatar(true);
+
+    try {
+      await updateProfile(auth.currentUser, {
+        photoURL: imageUrl.trim()
+      });
+      setUser({ ...auth.currentUser });
+      setCustomAvatarUrl('');
+      setIsAvatarModalOpen(false);
+      alert("Director avatar updated successfully!");
+    } catch (err) {
+      console.error("Avatar update failure:", err);
+      alert("Failed to update avatar: " + err.message);
+    } finally {
+      setIsUpdatingAvatar(false);
+    }
+  };
+
+  // Handler for Local Device File Selection
+  const handleLocalFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("File size exceeds 2MB limit. Please choose a smaller image.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64String = event.target?.result;
+      if (base64String) {
+        await handleApplyAvatar(base64String);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Format screen credit title
   const getDisplayTitleLabel = (titleId) => {
     switch (titleId) {
@@ -277,8 +370,8 @@ export default function ProfileDashboardPage() {
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
           
           <div className="flex items-center gap-5">
-            {/* High-Impact Animated Avatar Frame */}
-            <div className="relative group shrink-0">
+            {/* Clickable Avatar Container to Open Customizer Modal */}
+            <div className="relative group shrink-0 cursor-pointer" onClick={() => setIsAvatarModalOpen(true)} title="Click to customize avatar">
               {/* Outer Glow Halo */}
               <div 
                 className={`absolute -inset-1.5 rounded-3xl blur-md transition-all duration-500 pointer-events-none ${
@@ -286,18 +379,18 @@ export default function ProfileDashboardPage() {
                     ? 'bg-gradient-to-tr from-amber-500 via-yellow-300 to-amber-600 opacity-80 animate-pulse'
                     : profileData.equippedFrame === 'frame_neon_cyan'
                       ? 'bg-gradient-to-tr from-cyan-400 via-sky-300 to-indigo-500 opacity-90 animate-pulse'
-                      : 'bg-cyan-500/20 opacity-0'
+                      : 'bg-cyan-500/20 opacity-0 group-hover:opacity-60'
                 }`} 
               />
 
               {/* Avatar Box */}
               <div
-                className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden p-1 bg-[#090912] transition-all duration-300 ${
+                className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden p-1 bg-[#090912] transition-all duration-300 group-hover:scale-105 ${
                   profileData.equippedFrame === 'frame_solar_gold'
                     ? 'border-2 border-amber-300 shadow-[0_0_30px_rgba(251,191,36,0.7)] ring-2 ring-amber-400/50'
                     : profileData.equippedFrame === 'frame_neon_cyan'
                       ? 'border-2 border-cyan-300 shadow-[0_0_30px_rgba(6,182,212,0.8)] ring-2 ring-cyan-400/60'
-                      : 'border-2 border-white/10'
+                      : 'border-2 border-white/20 group-hover:border-cyan-400'
                 }`}
               >
                 <Image
@@ -307,6 +400,11 @@ export default function ProfileDashboardPage() {
                   sizes="96px"
                   className="object-cover rounded-xl"
                 />
+
+                {/* Hover Edit Overlay Indicator */}
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] font-mono text-cyan-300 font-bold uppercase tracking-wider text-center p-1">
+                  Edit Avatar
+                </div>
                 
                 {/* Status Dot */}
                 <span 
@@ -344,7 +442,7 @@ export default function ProfileDashboardPage() {
                 <span className="text-emerald-400">{profileData.clearance}</span>
               </p>
               <p className="text-[11px] text-gray-400 italic">
-                Directing orbital cinema feeds, screenings, and personal watchlists.
+                Directing orbital cinema feeds, screenings, and personal watchlists. Click your avatar to edit.
               </p>
             </div>
           </div>
@@ -380,6 +478,106 @@ export default function ProfileDashboardPage() {
 
         </div>
       </div>
+
+      {/* AVATAR CUSTOMIZER POPUP MODAL (CLEARED NAVBAR) */}
+      {isAvatarModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 pt-24 animate-fade-in">
+          <div className="bg-[#07070d] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-3xl w-full relative shadow-[0_0_60px_rgba(6,182,212,0.3)] space-y-6 flex flex-col max-h-[85vh] mt-6">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4 shrink-0">
+              <div>
+                <h3 className="text-base font-mono uppercase tracking-widest text-cyan-300 font-bold">
+                  Director Avatar Customizer
+                </h3>
+                <p className="text-xs text-gray-400 font-mono mt-1">
+                  Upload from local device, select from cartoon/anime or cinematic vault presets, or provide a custom URL.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAvatarModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:border-cyan-400 flex items-center justify-center text-gray-400 hover:text-white transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Local Device Upload Section */}
+            <div className="bg-[#0d0d18] border border-cyan-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+              <div>
+                <span className="text-xs font-mono font-bold text-cyan-300 uppercase block">Upload from Device</span>
+                <span className="text-[11px] text-gray-400 font-light">Select a PNG, JPG, or GIF image from your local computer (Max 2MB).</span>
+              </div>
+              <label className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-mono text-xs font-bold uppercase rounded-xl transition-all cursor-pointer shadow-md shrink-0 flex items-center gap-2">
+                <span>📁 Choose File</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  onChange={handleLocalFileSelect} 
+                  disabled={isUpdatingAvatar}
+                  className="hidden" 
+                />
+              </label>
+            </div>
+
+            {/* Scrollable Preset Selector Grid */}
+            <div className="space-y-3 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-cyan-500/30 flex-1">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-gray-400 block sticky top-0 bg-[#07070d] py-1 z-10">
+                Vault Presets ({AVATAR_PRESETS.length} Unique Styles Available)
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                {AVATAR_PRESETS.map((preset, idx) => (
+                  <button
+                    key={`preset-${idx}`}
+                    type="button"
+                    disabled={isUpdatingAvatar}
+                    onClick={() => handleApplyAvatar(preset.url)}
+                    className="group relative flex flex-col items-center p-3 bg-[#0d0d18] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl transition-all cursor-pointer"
+                  >
+                    <div className="relative w-14 h-14 rounded-xl overflow-hidden mb-2 border border-cyan-500/30 group-hover:scale-105 transition-transform bg-zinc-900 shrink-0 flex items-center justify-center p-1">
+                      <img src={preset.url} alt={preset.label} className="w-full h-full object-contain" />
+                    </div>
+                    <span className="text-[10px] font-mono font-bold text-gray-300 text-center truncate w-full">
+                      {preset.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom URL Input Form */}
+            <div className="space-y-3 pt-3 border-t border-cyan-500/20 shrink-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-gray-400 block">
+                Or Custom Image URL
+              </span>
+              <form 
+                onSubmit={(e) => { 
+                  e.preventDefault(); 
+                  handleApplyAvatar(customAvatarUrl); 
+                }} 
+                className="flex flex-col sm:flex-row gap-3 items-center"
+              >
+                <input
+                  type="url"
+                  value={customAvatarUrl}
+                  onChange={(e) => setCustomAvatarUrl(e.target.value)}
+                  placeholder="https://example.com/avatar.jpg"
+                  className="w-full sm:flex-1 bg-[#090912] border border-cyan-500/30 focus:border-cyan-400 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 outline-none font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={isUpdatingAvatar || !customAvatarUrl.trim()}
+                  className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-45 text-white font-mono text-xs font-bold uppercase rounded-xl transition-all cursor-pointer shadow-md shrink-0"
+                >
+                  {isUpdatingAvatar ? 'Updating...' : 'Set URL'}
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* CALL SHEET OBJECTIVES & PROP DEPT ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

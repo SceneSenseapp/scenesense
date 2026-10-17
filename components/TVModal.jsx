@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import ActorModal from '@/components/ActorModal';
+import ReviewModal from '@/components/ReviewModal';
 
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 const AMAZON_AFFILIATE_TAG = process.env.NEXT_PUBLIC_AMAZON_TAG || 'scenesense-20';
@@ -21,6 +22,9 @@ export default function TVModal({ tvId, onClose }) {
   const [selectedRegion, setSelectedRegion] = useState('US');
   const [isLoading, setIsLoading] = useState(true);
   const [playingTrailer, setPlayingTrailer] = useState(false);
+
+  // Global Review Modal Toggle State
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   // Actor Modal Navigation Stack
   const [selectedPersonId, setSelectedPersonId] = useState(null);
@@ -163,6 +167,15 @@ export default function TVModal({ tvId, onClose }) {
               <span className="text-xs font-mono tracking-widest uppercase text-cyan-400 font-bold">SCENESENSE TV SERIES OVERLAY</span>
 
               <div className="flex flex-wrap gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsReviewModalOpen(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-md shadow-cyan-500/20 cursor-pointer active:scale-95"
+                >
+                  <span>✍️</span>
+                  <span>Write Review</span>
+                </button>
+
                 <button
                   onClick={handleAskCineMind}
                   className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-[0_0_15px_rgba(147,51,234,0.3)] flex items-center gap-1.5 cursor-pointer active:scale-95"
@@ -463,6 +476,17 @@ export default function TVModal({ tvId, onClose }) {
           window.location.reload();
         }} 
       />
+
+      {/* Global Review Modal Integration */}
+      {isReviewModalOpen && tvShow && (
+        <ReviewModal
+          targetId={tvShow.id}
+          targetTitle={tvShow.name}
+          posterPath={tvShow.poster_path}
+          mediaType="tv"
+          onClose={() => setIsReviewModalOpen(false)}
+        />
+      )}
 
     </div>
   );
