@@ -180,6 +180,18 @@ export default function GlobalReviewsPage() {
     setIsMounted(true);
   }, []);
 
+  // Lock background scroll when any review modal is active
+  useEffect(() => {
+    if (inspectingFilm || showDeployModal) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [inspectingFilm, showDeployModal]);
+
   useEffect(() => {
     if (!isMounted || typeof window === 'undefined' || !auth) return;
 
@@ -316,7 +328,6 @@ export default function GlobalReviewsPage() {
       const cleanTitle = (rev.movieTitle || 'Untitled').trim().toLowerCase();
       const filmKey = rev.tmdbId ? `tmdb-${rev.tmdbId}` : `title-${cleanTitle}`;
 
-      // Specifically flag @FilmCritic, Operative, or anonymous accounts as bot reviews
       const rawUser = rev.userName || '';
       const isLegacyBot = 
         !rev.userId || 
@@ -329,14 +340,12 @@ export default function GlobalReviewsPage() {
       let displayHandle = rawUser ? `@${rawUser.replace(/^@/, '')}` : '@viewer';
 
       if (isLegacyBot) {
-        // Deterministically map to distinct real people from our pool
         const authorHash = (rev.id || `${cleanTitle}-${idx}`).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + idx;
         const profile = REAL_PERSON_PROFILES[authorHash % REAL_PERSON_PROFILES.length];
         displayAuthor = profile.name;
         displayHandle = `@${profile.handle}`;
       }
 
-      // Upgrade review text away from generic bot lines
       const enhancedText = getContextualCritique(
         rev.movieTitle || 'Untitled',
         rev.releaseYear,
@@ -969,9 +978,9 @@ export default function GlobalReviewsPage() {
 
       </main>
 
-      {/* DEDICATED FILM REVIEW DOSSIER MODAL WITH DISTINCT PERSON NAMES & HANDLES */}
+      {/* DEDICATED FILM REVIEW DOSSIER MODAL */}
       {activeInspectingFilm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6">
           <div className="bg-[#080d1a] border border-cyan-500/40 rounded-3xl w-full max-w-3xl shadow-[0_0_50px_rgba(6,182,212,0.2)] relative flex flex-col max-h-[90vh] overflow-hidden animate-zoom-in">
             
             <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#0b1122]/70 shrink-0">
@@ -1141,7 +1150,7 @@ export default function GlobalReviewsPage() {
 
       {/* EXPANDED REVIEW STUDIO MODAL */}
       {showDeployModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
           <div className="bg-[#080d1a] border border-cyan-500/40 rounded-3xl w-full max-w-4xl shadow-[0_0_50px_rgba(6,182,212,0.15)] relative flex flex-col max-h-[92vh] animate-zoom-in">
             
             <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#0b1122]/70 shrink-0 rounded-t-3xl">

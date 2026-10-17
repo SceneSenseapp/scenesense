@@ -7,6 +7,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import ActorModal from '@/components/ActorModal';
+import ReviewModal from '@/components/ReviewModal';
 
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 
@@ -53,6 +54,9 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
   const [selectedRegion, setSelectedRegion] = useState('US');
   const [isLoading, setIsLoading] = useState(true);
   const [playingTrailer, setPlayingTrailer] = useState(false);
+
+  // Global Review Modal Toggle State
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   const [showtimesText, setShowtimesText] = useState('');
   const [showtimesSources, setShowtimesSources] = useState([]);
@@ -348,10 +352,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
               <div className="flex items-center gap-2.5 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => {
-                    onClose();
-                    router.push(`/reviews/${media?.id || currentMovieId}?title=${encodeURIComponent(mediaTitle)}&poster=${media?.poster_path || ''}`);
-                  }}
+                  onClick={() => setIsReviewModalOpen(true)}
                   className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-md shadow-cyan-500/20 cursor-pointer active:scale-95"
                 >
                   <span>✍️</span>
@@ -367,7 +368,6 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                   <span>Brief CineMind</span>
                 </button>
 
-                {/* Clean, Non-Commercial Search Link (Zero Affiliate Tags) */}
                 <a
                   href={`https://www.google.com/search?q=${encodeURIComponent(`${mediaTitle} movie where to watch stream`)}`}
                   target="_blank"
@@ -645,7 +645,6 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                       </div>
                     )}
 
-                    {/* Mandatory TMDB & JustWatch Attribution */}
                     <div className="pt-2 text-[10px] font-mono text-gray-500 border-t border-white/5">
                       Streaming availability powered by JustWatch via TMDB. Data is non-commercial.
                     </div>
@@ -830,6 +829,17 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
 
           </div>
         </>
+      )}
+
+      {/* Global Review Modal Integration */}
+      {isReviewModalOpen && media && (
+        <ReviewModal
+          targetId={media.id}
+          targetTitle={mediaTitle}
+          posterPath={media.poster_path}
+          mediaType={currentMediaType}
+          onClose={() => setIsReviewModalOpen(false)}
+        />
       )}
 
     </div>
