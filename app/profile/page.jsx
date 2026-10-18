@@ -1,17 +1,29 @@
 // File: app/profile/page.jsx
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
-import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  increment, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  limit, 
+  serverTimestamp 
+} from 'firebase/firestore';
 import { auth, db } from '@/firebase';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import MovieModal from '@/components/MovieModal';
 
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
 
 // 40 Strictly Unique Studio & Character Avatars using Stable DiceBear Endpoints
 const AVATAR_PRESETS = [
@@ -68,7 +80,7 @@ export default function ProfileDashboardPage() {
     displayName: 'Mathew Scott',
     role: 'Head of Production',
     clearance: 'Level 4 Director',
-    walletCoins: 385,
+    walletCoins: 100,
     inventory: [],
     equippedFrame: null,
     equippedTitle: null,
@@ -87,13 +99,16 @@ export default function ProfileDashboardPage() {
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
 
+  // Watched state count from local and remote synchronization
+  const [watchedCount, setWatchedCount] = useState(0);
+
   // Modal State
   const [selectedMovieId, setSelectedMovieId] = useState(null);
 
   const router = useRouter();
 
-  // Recommendations anchored to user's saved watchlist
-  const fetchPersonalizedRecommendations = async (savedItems = []) => {
+  // Watchlist recommendations fetcher
+  const fetchPersonalizedRecommendations = useCallback(async (savedItems = []) => {
     setIsLoadingRecs(true);
     try {
       if (savedItems.length > 0) {
@@ -108,23 +123,25 @@ export default function ProfileDashboardPage() {
             const res = await fetch(
               `https://api.themoviedb.org/3/movie/${movieId}/recommendations?api_key=${TMDB_API_KEY}&language=en-US&page=1`
             );
-            const data = await res.json();
-            if (data.results && data.results.length > 0) {
-              data.results.slice(0, 3).forEach(movie => {
-                if (movie.poster_path && !aggregatedRecs.some(r => r.id === movie.id)) {
-                  aggregatedRecs.push({
-                    id: movie.id,
-                    title: movie.title,
-                    year: (movie.release_date || '').slice(0, 4) || 'N/A',
-                    posterPath: movie.poster_path,
-                    status: `Based on your Watchlist: ${item.title || item.name || 'Saved Title'}`,
-                    match: `${Math.min(99, Math.floor((movie.vote_average || 7) * 10) + 12)}%`
-                  });
-                }
-              });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.results && data.results.length > 0) {
+                data.results.slice(0, 3).forEach(movie => {
+                  if (movie.poster_path && !aggregatedRecs.some(r => r.id === movie.id)) {
+                    aggregatedRecs.push({
+                      id: movie.id,
+                      title: movie.title,
+                      year: (movie.release_date || '').slice(0, 4) || 'N/A',
+                      posterPath: movie.poster_path,
+                      status: `Based on your Watchlist: ${item.title || item.name || 'Saved Title'}`,
+                      match: `${Math.min(99, Math.floor((movie.vote_average || 7) * 10) + 12)}%`
+                    });
+                  }
+                });
+              }
             }
           } catch (e) {
-            console.error("TMDB Recs query error:", e);
+            console.warn("TMDB Recs query error:", e);
           }
         }
 
@@ -138,60 +155,82 @@ export default function ProfileDashboardPage() {
       const fallbackRes = await fetch(
         `https://api.themoviedb.org/3/movie/top_rated?api_key=${TMDB_API_KEY}&language=en-US&page=1`
       );
-      const fallbackData = await fallbackRes.json();
-      const fallbackRecs = (fallbackData.results || []).slice(0, 8).map(m => ({
-        id: m.id,
-        title: m.title,
-        year: (m.release_date || '').slice(0, 4),
-        posterPath: m.poster_path,
-        status: 'Studio Premieres',
-        match: `${Math.floor((m.vote_average || 7.5) * 10)}%`
-      }));
-      setWatchlistRecommendations(fallbackRecs);
-
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        const fallbackRecs = (fallbackData.results || []).slice(0, 8).map(m => ({
+          id: m.id,
+          title: m.title,
+          year: (m.release_date || '').slice(0, 4),
+          posterPath: m.poster_path,
+          status: 'Studio Premieres',
+          match: `${Math.floor((m.vote_average || 7.5) * 10)}%`
+        }));
+        setWatchlistRecommendations(fallbackRecs);
+      }
     } catch (err) {
-      console.error("Failed to build recommendations:", err);
+      console.warn("Failed to build recommendations:", err);
     } finally {
       setIsLoadingRecs(false);
     }
-  };
+  }, []);
 
+  // Dual State & Firestore User Document Self-Healing Initialization
   useEffect(() => {
+    if (!auth) return;
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
         try {
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            setProfileData(prev => ({
-              ...prev,
-              displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
-              walletCoins: Math.max(0, data.coins ?? 385),
-              inventory: data.inventory || [],
-              equippedFrame: data.equippedFrame || null,
-              equippedTitle: data.equippedTitle || null,
-              claimedBounties: data.claimedBounties || []
-            }));
-          }
+          if (db) {
+            const userRef = doc(db, 'users', currentUser.uid);
+            const userDoc = await getDoc(userRef);
 
-          const q = query(
-            collection(db, 'reviews'),
-            where('userId', '==', currentUser.uid),
-            limit(30)
-          );
-          const snaps = await getDocs(q);
-          const revs = [];
-          snaps.forEach(d => {
-            const data = d.data();
-            if (!data.isBotTransmission) {
-              revs.push({ id: d.id, ...data });
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              setProfileData(prev => ({
+                ...prev,
+                displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
+                walletCoins: typeof data.coins === 'number' ? data.coins : 100,
+                inventory: Array.isArray(data.inventory) ? data.inventory : [],
+                equippedFrame: data.equippedFrame || null,
+                equippedTitle: data.equippedTitle || null,
+                claimedBounties: Array.isArray(data.claimedBounties) ? data.claimedBounties : []
+              }));
+            } else {
+              // Self-healing initialization on first sign-in
+              const initialData = {
+                displayName: currentUser.displayName || 'Mathew Scott',
+                email: currentUser.email || '',
+                coins: 100,
+                inventory: [],
+                equippedFrame: null,
+                equippedTitle: null,
+                claimedBounties: [],
+                createdAt: serverTimestamp()
+              };
+              await setDoc(userRef, initialData, { merge: true });
+              setProfileData(prev => ({ ...prev, ...initialData }));
             }
-          });
-          setUserReviews(revs);
 
+            // Sync Reviews
+            const q = query(
+              collection(db, 'reviews'),
+              where('userId', '==', currentUser.uid),
+              limit(30)
+            );
+            const snaps = await getDocs(q);
+            const revs = [];
+            snaps.forEach(d => {
+              const data = d.data();
+              if (!data.isBotTransmission) {
+                revs.push({ id: d.id, ...data });
+              }
+            });
+            setUserReviews(revs);
+          }
         } catch (err) {
-          console.error("Profile retrieval error:", err);
+          console.warn("Profile retrieval warning:", err);
         } finally {
           setIsLoading(false);
         }
@@ -205,10 +244,9 @@ export default function ProfileDashboardPage() {
 
   useEffect(() => {
     fetchPersonalizedRecommendations(watchlist || []);
-  }, [watchlist]);
+  }, [watchlist, fetchPersonalizedRecommendations]);
 
   // Read watched state from storage
-  const [watchedCount, setWatchedCount] = useState(0);
   useEffect(() => {
     try {
       const saved = localStorage.getItem('scenesense_watched_map');
@@ -217,7 +255,7 @@ export default function ProfileDashboardPage() {
         setWatchedCount(Object.values(parsed).filter(Boolean).length);
       }
     } catch (e) {
-      console.error("Error reading watched map:", e);
+      console.warn("Error reading watched map:", e);
     }
   }, []);
 
@@ -261,21 +299,31 @@ export default function ProfileDashboardPage() {
     setClaimingId(obj.id);
 
     try {
-      const userRef = doc(db, 'users', user.uid);
       const updatedClaims = [...profileData.claimedBounties, obj.id];
+      const newBalance = profileData.walletCoins + obj.reward;
 
-      await updateDoc(userRef, {
-        coins: increment(obj.reward),
-        claimedBounties: updatedClaims
-      });
-
+      // Optimistic state update
       setProfileData(prev => ({
         ...prev,
-        walletCoins: prev.walletCoins + obj.reward,
+        walletCoins: newBalance,
         claimedBounties: updatedClaims
       }));
+
+      if (db) {
+        const userRef = doc(db, 'users', user.uid);
+        await updateDoc(userRef, {
+          coins: increment(obj.reward),
+          claimedBounties: updatedClaims
+        });
+      }
     } catch (err) {
       console.error("Failed to claim objective reward:", err);
+      // Rollback on failure
+      setProfileData(prev => ({
+        ...prev,
+        walletCoins: prev.walletCoins - obj.reward,
+        claimedBounties: prev.claimedBounties.filter(id => id !== obj.id)
+      }));
     } finally {
       setClaimingId(null);
     }
@@ -287,28 +335,39 @@ export default function ProfileDashboardPage() {
     const isCurrentlyEquipped = profileData[type] === itemId;
     const nextValue = isCurrentlyEquipped ? null : itemId;
 
+    setProfileData(prev => ({ ...prev, [type]: nextValue }));
+
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, { [type]: nextValue });
-      setProfileData(prev => ({ ...prev, [type]: nextValue }));
+      if (db) {
+        const userRef = doc(db, 'users', user.uid);
+        await updateDoc(userRef, { [type]: nextValue });
+      }
     } catch (err) {
       console.error("Failed to update equipment locker:", err);
+      setProfileData(prev => ({ ...prev, [type]: isCurrentlyEquipped ? itemId : null }));
     }
   };
 
   // Handler for Updating Avatar (Presets, Custom URL, or Local File)
   const handleApplyAvatar = async (imageUrl) => {
-    if (!imageUrl || !imageUrl.trim() || !auth.currentUser) return;
+    if (!imageUrl || !imageUrl.trim() || !auth?.currentUser) return;
     setIsUpdatingAvatar(true);
 
     try {
       await updateProfile(auth.currentUser, {
         photoURL: imageUrl.trim()
       });
+
+      if (db) {
+        const userRef = doc(db, 'users', auth.currentUser.uid);
+        await updateDoc(userRef, {
+          photoURL: imageUrl.trim()
+        });
+      }
+
       setUser({ ...auth.currentUser });
       setCustomAvatarUrl('');
       setIsAvatarModalOpen(false);
-      alert("Director avatar updated successfully!");
     } catch (err) {
       console.error("Avatar update failure:", err);
       alert("Failed to update avatar: " + err.message);
@@ -351,9 +410,9 @@ export default function ProfileDashboardPage() {
 
   if (!user && isLoading) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center space-y-3">
+      <div className="min-h-[80vh] flex flex-col items-center justify-center space-y-3 font-mono">
         <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-mono text-cyan-400 uppercase tracking-widest">Loading Director&apos;s Dossier...</span>
+        <span className="text-xs text-cyan-400 uppercase tracking-widest">Loading Director&apos;s Dossier...</span>
       </div>
     );
   }
@@ -370,9 +429,8 @@ export default function ProfileDashboardPage() {
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
           
           <div className="flex items-center gap-5">
-            {/* Clickable Avatar Container to Open Customizer Modal */}
+            {/* Clickable Avatar Container */}
             <div className="relative group shrink-0 cursor-pointer" onClick={() => setIsAvatarModalOpen(true)} title="Click to customize avatar">
-              {/* Outer Glow Halo */}
               <div 
                 className={`absolute -inset-1.5 rounded-3xl blur-md transition-all duration-500 pointer-events-none ${
                   profileData.equippedFrame === 'frame_solar_gold'
@@ -383,7 +441,6 @@ export default function ProfileDashboardPage() {
                 }`} 
               />
 
-              {/* Avatar Box */}
               <div
                 className={`relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden p-1 bg-[#090912] transition-all duration-300 group-hover:scale-105 ${
                   profileData.equippedFrame === 'frame_solar_gold'
@@ -397,16 +454,15 @@ export default function ProfileDashboardPage() {
                   src={user?.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250"}
                   alt="Director Avatar"
                   fill
+                  unoptimized
                   sizes="96px"
                   className="object-cover rounded-xl"
                 />
 
-                {/* Hover Edit Overlay Indicator */}
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] font-mono text-cyan-300 font-bold uppercase tracking-wider text-center p-1">
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] font-mono text-cyan-300 font-bold uppercase tracking-wider text-center p-1">
                   Edit Avatar
                 </div>
                 
-                {/* Status Dot */}
                 <span 
                   className={`absolute bottom-1 right-1 w-3.5 h-3.5 border-2 border-black rounded-full shadow-md ${
                     profileData.equippedFrame === 'frame_solar_gold'
@@ -425,7 +481,6 @@ export default function ProfileDashboardPage() {
                   {profileData.displayName}
                 </h1>
                 
-                {/* Active Opening Screen Credit */}
                 {profileData.equippedTitle ? (
                   <span className="px-2.5 py-0.5 bg-gradient-to-r from-amber-500/20 to-amber-600/30 border border-amber-500/50 text-[10px] font-mono text-amber-300 font-bold rounded-md shadow-sm">
                     [{getDisplayTitleLabel(profileData.equippedTitle)}]
@@ -436,12 +491,12 @@ export default function ProfileDashboardPage() {
                   </span>
                 )}
               </div>
-              <p className="text-xs font-mono text-gray-400 flex items-center gap-2">
+              <p className="text-xs font-mono text-slate-400 flex items-center gap-2">
                 <span>Studio: London, ON</span>
                 <span>•</span>
                 <span className="text-emerald-400">{profileData.clearance}</span>
               </p>
-              <p className="text-[11px] text-gray-400 italic">
+              <p className="text-[11px] text-slate-400 italic">
                 Directing orbital cinema feeds, screenings, and personal watchlists. Click your avatar to edit.
               </p>
             </div>
@@ -450,27 +505,27 @@ export default function ProfileDashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full md:w-auto">
             <Link 
               href="/armoury"
-              className="bg-[#0e0e18] border border-amber-500/30 hover:border-amber-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer"
+              className="bg-[#080d1a] border border-amber-500/30 hover:border-amber-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer shadow-inner"
             >
-              <span className="text-[10px] font-mono uppercase text-gray-400 group-hover:text-amber-300 block">Studio Coins</span>
-              <span className="text-lg font-black text-amber-400 flex items-center justify-center gap-1">
+              <span className="text-[10px] font-mono uppercase text-slate-400 group-hover:text-amber-300 block">Studio Coins</span>
+              <span className="text-lg font-black text-amber-400 flex items-center justify-center gap-1 font-mono">
                 {profileData.walletCoins} <span className="text-sm">🪙</span>
               </span>
             </Link>
 
             <Link 
               href="/watchlist"
-              className="bg-[#0e0e18] border border-cyan-500/20 hover:border-cyan-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer"
+              className="bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-4 py-2.5 rounded-2xl text-center transition-colors group cursor-pointer shadow-inner"
             >
-              <span className="text-[10px] font-mono uppercase text-gray-400 group-hover:text-cyan-300 block">Watchlist Titles</span>
-              <span className="text-lg font-black text-cyan-300">
+              <span className="text-[10px] font-mono uppercase text-slate-400 group-hover:text-cyan-300 block">Watchlist Titles</span>
+              <span className="text-lg font-black text-cyan-300 font-mono">
                 {savedTitlesCount}
               </span>
             </Link>
 
-            <div className="bg-[#0e0e18] border border-cyan-500/20 px-4 py-2.5 rounded-2xl text-center col-span-2 sm:col-span-1">
-              <span className="text-[10px] font-mono uppercase text-gray-400 block">Dispatches Logged</span>
-              <span className="text-lg font-black text-indigo-300">
+            <div className="bg-[#080d1a] border border-cyan-500/20 px-4 py-2.5 rounded-2xl text-center col-span-2 sm:col-span-1 shadow-inner">
+              <span className="text-[10px] font-mono uppercase text-slate-400 block">Dispatches Logged</span>
+              <span className="text-lg font-black text-indigo-300 font-mono">
                 {userReviews.length}
               </span>
             </div>
@@ -479,35 +534,34 @@ export default function ProfileDashboardPage() {
         </div>
       </div>
 
-      {/* AVATAR CUSTOMIZER POPUP MODAL (CLEARED NAVBAR) */}
+      {/* AVATAR CUSTOMIZER POPUP MODAL */}
       {isAvatarModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 pt-24 animate-fade-in">
-          <div className="bg-[#07070d] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-3xl w-full relative shadow-[0_0_60px_rgba(6,182,212,0.3)] space-y-6 flex flex-col max-h-[85vh] mt-6">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 pt-20 animate-fade-in">
+          <div className="bg-[#07070d] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-3xl w-full relative shadow-[0_0_60px_rgba(6,182,212,0.3)] space-y-6 flex flex-col max-h-[85vh] mt-4">
             
-            {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4 shrink-0">
               <div>
                 <h3 className="text-base font-mono uppercase tracking-widest text-cyan-300 font-bold">
                   Director Avatar Customizer
                 </h3>
-                <p className="text-xs text-gray-400 font-mono mt-1">
+                <p className="text-xs text-slate-400 font-mono mt-1">
                   Upload from local device, select from cartoon/anime or cinematic vault presets, or provide a custom URL.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAvatarModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:border-cyan-400 flex items-center justify-center text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:border-cyan-400 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer font-mono"
               >
                 ✕
               </button>
             </div>
 
             {/* Local Device Upload Section */}
-            <div className="bg-[#0d0d18] border border-cyan-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+            <div className="bg-[#080d1a] border border-cyan-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
               <div>
                 <span className="text-xs font-mono font-bold text-cyan-300 uppercase block">Upload from Device</span>
-                <span className="text-[11px] text-gray-400 font-light">Select a PNG, JPG, or GIF image from your local computer (Max 2MB).</span>
+                <span className="text-[11px] text-slate-400 font-light">Select a PNG, JPG, or GIF image from your local computer (Max 2MB).</span>
               </div>
               <label className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-mono text-xs font-bold uppercase rounded-xl transition-all cursor-pointer shadow-md shrink-0 flex items-center gap-2">
                 <span>📁 Choose File</span>
@@ -523,7 +577,7 @@ export default function ProfileDashboardPage() {
 
             {/* Scrollable Preset Selector Grid */}
             <div className="space-y-3 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-cyan-500/30 flex-1">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-gray-400 block sticky top-0 bg-[#07070d] py-1 z-10">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block sticky top-0 bg-[#07070d] py-1 z-10">
                 Vault Presets ({AVATAR_PRESETS.length} Unique Styles Available)
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
@@ -533,12 +587,12 @@ export default function ProfileDashboardPage() {
                     type="button"
                     disabled={isUpdatingAvatar}
                     onClick={() => handleApplyAvatar(preset.url)}
-                    className="group relative flex flex-col items-center p-3 bg-[#0d0d18] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl transition-all cursor-pointer"
+                    className="group relative flex flex-col items-center p-3 bg-[#080d1a] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl transition-all cursor-pointer"
                   >
                     <div className="relative w-14 h-14 rounded-xl overflow-hidden mb-2 border border-cyan-500/30 group-hover:scale-105 transition-transform bg-zinc-900 shrink-0 flex items-center justify-center p-1">
                       <img src={preset.url} alt={preset.label} className="w-full h-full object-contain" />
                     </div>
-                    <span className="text-[10px] font-mono font-bold text-gray-300 text-center truncate w-full">
+                    <span className="text-[10px] font-mono font-bold text-slate-300 text-center truncate w-full">
                       {preset.label}
                     </span>
                   </button>
@@ -548,7 +602,7 @@ export default function ProfileDashboardPage() {
 
             {/* Custom URL Input Form */}
             <div className="space-y-3 pt-3 border-t border-cyan-500/20 shrink-0">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-gray-400 block">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block">
                 Or Custom Image URL
               </span>
               <form 
@@ -563,7 +617,7 @@ export default function ProfileDashboardPage() {
                   value={customAvatarUrl}
                   onChange={(e) => setCustomAvatarUrl(e.target.value)}
                   placeholder="https://example.com/avatar.jpg"
-                  className="w-full sm:flex-1 bg-[#090912] border border-cyan-500/30 focus:border-cyan-400 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 outline-none font-mono"
+                  className="w-full sm:flex-1 bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 outline-none font-mono"
                 />
                 <button
                   type="submit"
@@ -592,12 +646,11 @@ export default function ProfileDashboardPage() {
                   Daily Call Sheet Objectives
                 </h3>
               </div>
-              <span className="text-[11px] font-mono text-gray-400">
+              <span className="text-[11px] font-mono text-slate-400">
                 {profileData.claimedBounties.length} / {objectives.length} Claimed
               </span>
             </div>
 
-            {/* List of Dynamic Objectives */}
             <div className="space-y-4">
               {objectives.map((obj) => {
                 const isClaimed = profileData.claimedBounties.includes(obj.id);
@@ -610,7 +663,7 @@ export default function ProfileDashboardPage() {
                     className={`p-4 rounded-2xl border transition-all ${
                       isClaimed 
                         ? 'bg-[#091410]/40 border-emerald-500/20 opacity-75' 
-                        : 'bg-[#0d0d18] border-white/5 hover:border-cyan-500/40'
+                        : 'bg-[#080d1a] border-white/5 hover:border-cyan-500/40'
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -622,12 +675,12 @@ export default function ProfileDashboardPage() {
                               <span>{obj.icon}</span>
                               <span>{obj.title}</span>
                             </span>
-                            <span className="font-mono text-[10px] text-gray-400">
+                            <span className="font-mono text-[10px] text-slate-400">
                               {obj.current} / {obj.goal} ({progressPct}%)
                             </span>
                           </div>
 
-                          <p className="text-[11px] text-gray-400 font-light mt-0.5 leading-snug">
+                          <p className="text-[11px] text-slate-400 font-light mt-0.5 leading-snug">
                             {obj.description}
                           </p>
                         </div>
@@ -657,7 +710,7 @@ export default function ProfileDashboardPage() {
                             ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-400 cursor-default'
                             : isReady
                               ? 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black shadow-md shadow-amber-500/20 cursor-pointer active:scale-95'
-                              : 'bg-[#141420] border border-white/10 text-gray-500 cursor-not-allowed'
+                              : 'bg-[#141420] border border-white/10 text-slate-500 cursor-not-allowed'
                         }`}
                       >
                         {isClaimed ? (
@@ -686,7 +739,7 @@ export default function ProfileDashboardPage() {
             <h3 className="text-lg font-bold text-white">
               The Prop Department
             </h3>
-            <p className="text-xs text-gray-400 leading-relaxed font-light">
+            <p className="text-xs text-slate-400 leading-relaxed font-light">
               Equip custom title badges, holographic critic foil, and expand your screening watchlist using Studio Coins.
             </p>
           </div>
@@ -720,7 +773,7 @@ export default function ProfileDashboardPage() {
                 className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white border border-cyan-400/50 shadow-md shadow-cyan-600/30'
-                    : 'bg-[#0e0e16] text-gray-400 hover:text-white border border-cyan-500/20'
+                    : 'bg-[#080d1a] text-slate-400 hover:text-white border border-cyan-500/20'
                 }`}
               >
                 {tab.label}
@@ -750,7 +803,7 @@ export default function ProfileDashboardPage() {
                   <div
                     key={target.id}
                     onClick={() => setSelectedMovieId(target.id)}
-                    className="bg-[#0b0b14] border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-3 flex flex-col justify-between group transition-all duration-300 shadow-md hover:-translate-y-1 hover:shadow-[0_10px_25px_rgba(6,182,212,0.2)] cursor-pointer"
+                    className="bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-3 flex flex-col justify-between group transition-all duration-300 shadow-md hover:-translate-y-1 hover:shadow-[0_10px_25px_rgba(6,182,212,0.2)] cursor-pointer"
                   >
                     <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-[#141420] mb-2.5 border border-white/5">
                       {target.posterPath ? (
@@ -783,7 +836,7 @@ export default function ProfileDashboardPage() {
                       >
                         {target.title}
                       </h4>
-                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-gray-400">
+                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-slate-400">
                         <span>{target.year}</span>
                         <button 
                           type="button"
@@ -802,7 +855,7 @@ export default function ProfileDashboardPage() {
               </div>
             ) : (
               <div className="py-16 text-center border border-cyan-500/20 bg-[#07070d] rounded-2xl p-6">
-                <p className="text-xs font-mono text-gray-400 mb-3">No titles in your watchlist to anchor recommendations.</p>
+                <p className="text-xs font-mono text-slate-400 mb-3">No titles in your watchlist to anchor recommendations.</p>
                 <Link
                   href="/where-to-watch"
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold rounded-xl transition-all"
@@ -821,28 +874,28 @@ export default function ProfileDashboardPage() {
               userReviews.map((rev) => (
                 <div
                   key={rev.id}
-                  className="bg-[#0b0b14] border border-cyan-500/20 rounded-2xl p-4 flex flex-col justify-between space-y-3"
+                  className="bg-[#080d1a] border border-cyan-500/20 rounded-2xl p-4 flex flex-col justify-between space-y-3"
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-bold text-white truncate">{rev.movieTitle || rev.title}</h4>
-                      <span className="text-xs font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                      <span className="text-xs font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-mono">
                         ★ {rev.rating}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-300 italic font-light line-clamp-3 leading-relaxed">
+                    <p className="text-xs text-slate-300 italic font-light line-clamp-3 leading-relaxed">
                       &quot;{rev.reviewText || rev.snippet}&quot;
                     </p>
                   </div>
 
-                  <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] font-mono text-gray-400">
+                  <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] font-mono text-slate-400">
                     <span>Logged in Studio Feed</span>
                     <span className="text-cyan-400">Verified</span>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="col-span-3 py-16 text-center text-gray-400 font-mono text-xs border border-cyan-500/20 rounded-2xl bg-[#07070d]">
+              <div className="col-span-3 py-16 text-center text-slate-400 font-mono text-xs border border-cyan-500/20 rounded-2xl bg-[#07070d]">
                 No published film reviews recorded yet. Log a review in Global Reviews to earn coins.
               </div>
             )}
@@ -854,14 +907,14 @@ export default function ProfileDashboardPage() {
           <div className="space-y-6">
             
             {/* Wallet Overview Box */}
-            <div className="bg-[#0b0b14] border border-cyan-500/20 rounded-3xl p-6 text-center space-y-3 shadow-lg">
+            <div className="bg-[#080d1a] border border-cyan-500/20 rounded-3xl p-6 text-center space-y-3 shadow-lg">
               <div className="w-14 h-14 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center text-2xl mx-auto shadow-inner">
                 🪙
               </div>
               <div>
-                <h3 className="text-sm font-mono uppercase tracking-widest text-gray-400">Current Studio Balance</h3>
-                <p className="text-3xl font-black text-amber-400 mt-1">{profileData.walletCoins} Coins Available</p>
-                <p className="text-xs text-gray-400 max-w-md mx-auto pt-1 font-light">
+                <h3 className="text-sm font-mono uppercase tracking-widest text-slate-400">Current Studio Balance</h3>
+                <p className="text-3xl font-black text-amber-400 mt-1 font-mono">{profileData.walletCoins} Coins Available</p>
+                <p className="text-xs text-slate-400 max-w-md mx-auto pt-1 font-light">
                   Complete daily call sheets and file reviews to earn coins for prop acquisitions.
                 </p>
               </div>
@@ -885,7 +938,7 @@ export default function ProfileDashboardPage() {
                     Active Equipment Locker ({profileData.inventory.length} Props Unlocked)
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono text-gray-400">
+                <span className="text-[10px] font-mono text-slate-400">
                   Click to Equip / Unequip
                 </span>
               </div>
@@ -909,14 +962,14 @@ export default function ProfileDashboardPage() {
                         className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${
                           isEquipped 
                             ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.25)]' 
-                            : 'bg-[#0d0d16] border-white/5 hover:border-white/20'
+                            : 'bg-[#050811] border-white/5 hover:border-white/20'
                         }`}
                       >
                         <div className="space-y-1">
                           <span className="text-xs font-bold text-white block">
                             {isFrame ? `🎞️ ${formattedName} FRAME` : isTitle ? `🏷️ [${formattedName}]` : `⚡ ${formattedName}`}
                           </span>
-                          <span className="text-[10px] font-mono text-gray-400 block">
+                          <span className="text-[10px] font-mono text-slate-400 block">
                             {isFrame ? 'Avatar Film Reel Border' : isTitle ? 'Opening Screen Credit' : 'Studio Asset'}
                           </span>
                         </div>
@@ -927,8 +980,8 @@ export default function ProfileDashboardPage() {
                             onClick={() => handleToggleEquip(itemId, equipKey)}
                             className={`px-3.5 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer ${
                               isEquipped
-                                ? 'bg-cyan-500 text-black shadow-md hover:bg-cyan-400'
-                                : 'bg-white/5 border border-white/10 hover:border-cyan-400 text-gray-300'
+                                ? 'bg-cyan-500 text-black shadow-md hover:bg-cyan-400 font-black'
+                                : 'bg-white/5 border border-white/10 hover:border-cyan-400 text-slate-300'
                             }`}
                           >
                             {isEquipped ? '✓ Equipped' : 'Equip'}
@@ -943,7 +996,7 @@ export default function ProfileDashboardPage() {
                   })}
                 </div>
               ) : (
-                <div className="py-12 text-center text-xs font-mono text-gray-500 border border-dashed border-white/10 rounded-2xl p-6">
+                <div className="py-12 text-center text-xs font-mono text-slate-500 border border-dashed border-white/10 rounded-2xl p-6">
                   No props or cosmetics acquired yet. Requisition items in the Prop Department using Studio Coins.
                 </div>
               )}

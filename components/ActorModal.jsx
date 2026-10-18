@@ -209,7 +209,7 @@ export default function ActorModal({
           <div className="space-y-10 max-h-[75vh] overflow-y-auto pr-3 scrollbar-stealth-pill">
             
             <div className="flex flex-col sm:flex-row gap-8 items-center sm:items-start border-b border-cyan-500/20 pb-8">
-              <div className="relative w-36 sm:w-48 aspect-[2/3] rounded-2xl overflow-hidden border border-cyan-500/40 shadow-[0_0_30px_rgba(6,182,212,0.3)] flex-shrink-0 bg-[#141420]">
+              <div className="relative w-36 sm:w-48 aspect-[2/3] rounded-2xl overflow-hidden border border-cyan-500/40 shadow-[0_0_30px_rgba(6,182,212,0.3)] shrink-0 bg-[#141420]">
                 {personData.profile_path ? (
                   <Image 
                     src={`https://image.tmdb.org/t/p/w500${personData.profile_path}`} 
@@ -244,7 +244,7 @@ export default function ActorModal({
               </div>
             </div>
 
-            {/* Filmography & TV - Single-Line Side Scroller */}
+            {/* Filmography & TV - Clean Artwork Side Scroller */}
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-mono uppercase tracking-[0.2em] text-cyan-400 font-bold">
@@ -258,6 +258,9 @@ export default function ActorModal({
               <div className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x snap-mandatory scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent">
                 {personCredits.map((item) => {
                   const date = item.release_date;
+                  const year = date ? date.split('-')[0] : 'N/A';
+                  const rating = item.vote_average ? Number(item.vote_average).toFixed(1) : null;
+
                   return (
                     <div
                       key={`${item.media_type}-${item.id}`}
@@ -265,6 +268,7 @@ export default function ActorModal({
                       className="snap-start shrink-0 w-36 sm:w-40 bg-black/60 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-2.5 flex flex-col justify-between cursor-pointer transition-all group shadow-md hover:-translate-y-1 hover:shadow-[0_8px_25px_rgba(6,182,212,0.25)]"
                     >
                       <div>
+                        {/* 100% Clean Poster Art (No Overlapping Badges) */}
                         <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-white/5 mb-2 border border-cyan-500/20">
                           {item.poster_path ? (
                             <Image 
@@ -278,12 +282,8 @@ export default function ActorModal({
                           ) : (
                             <div className="flex items-center justify-center h-full text-[10px] text-gray-500 font-mono">N/A</div>
                           )}
-                          {item.vote_average > 0 && (
-                            <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-black text-amber-400 border border-amber-500/30">
-                              ★ {Number(item.vote_average).toFixed(1)}
-                            </div>
-                          )}
                         </div>
+                        
                         <p 
                           className="text-xs font-bold line-clamp-2 h-8 leading-snug group-hover:text-cyan-300 transition-colors mb-2 px-0.5"
                           title={item.title}
@@ -292,13 +292,19 @@ export default function ActorModal({
                         </p>
                       </div>
 
+                      {/* Clean Inline Metadata Below Title */}
                       <div className="mt-1 space-y-0.5 border-t border-white/5 pt-1.5">
                         <p className="text-[10px] font-mono text-cyan-400/90 truncate" title={item.roles.join(', ')}>
                           {item.roles.join(', ')}
                         </p>
-                        <p className="text-[9px] font-mono text-gray-500">
-                          {date ? date.split('-')[0] : 'N/A'} • <span className="uppercase">{item.media_type}</span>
-                        </p>
+                        <div className="flex items-center justify-between text-[9px] font-mono text-gray-400">
+                          <span>{year} • <span className="uppercase">{item.media_type}</span></span>
+                          {rating && rating > 0 && (
+                            <span className="text-amber-400 font-bold flex items-center gap-0.5">
+                              <span>★</span> {rating}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

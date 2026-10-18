@@ -413,7 +413,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                 
                 {/* Header Details Hero */}
                 <div className="flex flex-col md:flex-row gap-8 items-center md:items-start">
-                  <div className="relative w-48 sm:w-56 aspect-[2/3] rounded-2xl overflow-hidden bg-white/5 border border-cyan-500/30 flex-shrink-0 shadow-2xl">
+                  <div className="relative w-48 sm:w-56 aspect-[2/3] rounded-2xl overflow-hidden bg-white/5 border border-cyan-500/30 shrink-0 shadow-2xl">
                     {media.poster_path ? (
                       <Image
                         src={`https://image.tmdb.org/t/p/w500${media.poster_path}`}
@@ -595,7 +595,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                               className="flex items-center gap-2.5 bg-[#181820] hover:bg-[#252530] border border-cyan-500/20 px-3.5 py-2 rounded-xl transition-all group cursor-pointer"
                               title={`Watch "${mediaTitle}" on ${prov.provider_name}`}
                             >
-                              <div className="relative w-6 h-6 rounded overflow-hidden bg-white/10 flex-shrink-0">
+                              <div className="relative w-6 h-6 rounded overflow-hidden bg-white/10 shrink-0">
                                 <Image 
                                   src={`https://image.tmdb.org/t/p/w92${prov.logo_path}`} 
                                   alt={prov.provider_name} 
@@ -627,7 +627,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                               rel="noopener noreferrer"
                               className="flex items-center gap-2 bg-[#121218] hover:bg-[#1a1a24] border border-white/10 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-300 hover:text-white transition-all cursor-pointer"
                             >
-                              <div className="relative w-4 h-4 rounded overflow-hidden bg-white/5 flex-shrink-0">
+                              <div className="relative w-4 h-4 rounded overflow-hidden bg-white/5 shrink-0">
                                 <Image 
                                   src={`https://image.tmdb.org/t/p/w92${prov.logo_path}`} 
                                   alt={prov.provider_name} 
@@ -751,7 +751,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                   </div>
                 )}
 
-                {/* Similar Titles - Single-Line Side Scroller */}
+                {/* Similar Titles - Clean Artwork Side Scroller */}
                 {allSimilar.length > 0 && (
                   <div className="pt-6 border-t border-cyan-500/20 space-y-4">
                     <div className="flex items-center justify-between flex-wrap gap-4">
@@ -771,6 +771,8 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                       {displayedSimilar.map((sim) => {
                         const isSimSaved = (watchlist || []).some(w => String(w.id) === String(sim.id));
                         const simTitle = sim.title || sim.name || 'Similar Title';
+                        const simYear = (sim.release_date || sim.first_air_date || '').split('-')[0] || 'N/A';
+                        const simRating = sim.vote_average ? Number(sim.vote_average).toFixed(1) : null;
 
                         return (
                           <div 
@@ -779,6 +781,7 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                             className="snap-start shrink-0 w-36 sm:w-40 bg-black/60 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-2.5 flex flex-col justify-between cursor-pointer transition-all group shadow-md hover:-translate-y-1 hover:shadow-[0_8px_25px_rgba(6,182,212,0.25)]"
                           >
                             <div>
+                              {/* 100% Clean Poster Art (No Overlapping Badges) */}
                               <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-white/5 mb-2 border border-cyan-500/20">
                                 {sim.poster_path ? (
                                   <Image 
@@ -792,18 +795,21 @@ export default function MovieModal({ movieId: initialMovieId, mediaType: initial
                                 ) : (
                                   <div className="flex items-center justify-center h-full text-[10px] text-gray-500 font-mono">N/A</div>
                                 )}
-                                {sim.vote_average > 0 && (
-                                  <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-black text-amber-400 border border-amber-500/30">
-                                    ★ {Number(sim.vote_average).toFixed(1)}
-                                  </div>
-                                )}
                               </div>
                               <p 
-                                className="text-xs font-bold line-clamp-2 h-8 leading-snug group-hover:text-cyan-300 transition-colors mb-2 px-0.5"
+                                className="text-xs font-bold line-clamp-2 h-8 leading-snug group-hover:text-cyan-300 transition-colors mb-1.5 px-0.5"
                                 title={simTitle}
                               >
                                 {simTitle}
                               </p>
+                              <div className="flex items-center justify-between text-[9px] font-mono text-gray-400 px-0.5 mb-2">
+                                <span>{simYear}</span>
+                                {simRating && simRating > 0 && (
+                                  <span className="text-amber-400 font-bold flex items-center gap-0.5">
+                                    <span>★</span> {simRating}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <button

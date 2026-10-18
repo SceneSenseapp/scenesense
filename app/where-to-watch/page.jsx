@@ -1,4 +1,4 @@
-// app/where/page.jsx
+// app/where-to-watch/page.jsx
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -9,7 +9,7 @@ import { useWatchlist } from '@/hooks/useWatchlist';
 import Image from 'next/image';
 import MovieModal from '@/components/MovieModal';
 
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
 
 const GENRES = [
   { id: null, label: 'All Genres' },
@@ -30,16 +30,16 @@ const GENRES = [
 ];
 
 const REGIONS = [
-  { id: 'CA', label: 'Canada' },
-  { id: 'US', label: 'United States' },
-  { id: 'GB', label: 'United Kingdom' },
-  { id: 'AU', label: 'Australia' }
+  { id: 'CA', label: 'Canada 🇨🇦' },
+  { id: 'US', label: 'United States 🇺🇸' },
+  { id: 'GB', label: 'United Kingdom 🇬🇧' },
+  { id: 'AU', label: 'Australia 🇦🇺' }
 ];
 
 const MEDIA_TYPES = [
-  { id: 'all', label: 'All Titles' },
+  { id: 'all', label: 'All Formats' },
   { id: 'movie', label: 'Movies' },
-  { id: 'tv', label: 'TV Shows' }
+  { id: 'tv', label: 'Series' }
 ];
 
 const detectUserRegion = () => {
@@ -47,15 +47,11 @@ const detectUserRegion = () => {
 
   try {
     const saved = localStorage.getItem('scenesense_region');
-    if (saved && REGIONS.some(r => r.id === saved)) {
-      return saved;
-    }
+    if (saved && REGIONS.some(r => r.id === saved)) return saved;
 
     const locale = navigator.language || (navigator.languages && navigator.languages[0]) || '';
     const localeCountry = locale.split('-')[1]?.toUpperCase();
-    if (REGIONS.some(r => r.id === localeCountry)) {
-      return localeCountry;
-    }
+    if (REGIONS.some(r => r.id === localeCountry)) return localeCountry;
 
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
     if (
@@ -68,26 +64,20 @@ const detectUserRegion = () => {
     ) {
       return 'CA';
     }
-    if (tz.startsWith('Europe/London')) {
-      return 'GB';
-    }
-    if (tz.startsWith('Australia/')) {
-      return 'AU';
-    }
-    if (tz.startsWith('America/') && !tz.includes('Toronto') && !tz.includes('Vancouver')) {
-      return 'US';
-    }
+    if (tz.startsWith('Europe/London')) return 'GB';
+    if (tz.startsWith('Australia/')) return 'AU';
+    if (tz.startsWith('America/') && !tz.includes('Toronto') && !tz.includes('Vancouver')) return 'US';
   } catch (e) {
-    console.error('Region auto-detect fallback applied:', e);
+    console.warn('Region auto-detect fallback applied:', e);
   }
 
   return 'CA';
 };
 
-export default function FindAFilmPage() {
+export default function WhereToWatchPage() {
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [mediaType, setMediaType] = useState('all'); // 'all' | 'movie' | 'tv'
+  const [mediaType, setMediaType] = useState('all');
   const [movies, setMovies] = useState([]);
   const [activeCategory, setActiveCategory] = useState('trending');
   const [selectedGenre, setSelectedGenre] = useState(null);
@@ -96,7 +86,6 @@ export default function FindAFilmPage() {
   const [sortBy, setSortBy] = useState('popularity.desc');
   const [providerList, setProviderList] = useState([]);
   
-  // Modal states for popup selection
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
   const [isGenreModalOpen, setIsGenreModalOpen] = useState(false);
 
@@ -106,7 +95,6 @@ export default function FindAFilmPage() {
   const [page, setPage] = useState(1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // Ref to target the first item of a newly loaded batch for smooth auto-jump
   const newBatchRef = useRef(null);
   const prevCountRef = useRef(0);
 
@@ -114,6 +102,7 @@ export default function FindAFilmPage() {
   const { watchlist, saveToWatchlist, removeFromWatchlist } = useWatchlist();
 
   useEffect(() => {
+    if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
@@ -124,8 +113,8 @@ export default function FindAFilmPage() {
     return () => unsubscribe();
   }, [router]);
 
-  // Dynamically fetch live watch providers from TMDB based on selected region
   useEffect(() => {
+    let isCancelled = false;
     const fetchProviders = async () => {
       try {
         const endpoint = mediaType === 'tv'
@@ -133,26 +122,29 @@ export default function FindAFilmPage() {
           : `https://api.themoviedb.org/3/watch/providers/movie?api_key=${TMDB_API_KEY}&watch_region=${selectedRegion}`;
 
         const res = await fetch(endpoint);
-        const data = await res.json();
-        if (data.results && data.results.length > 0) {
-          const targetIds = [8, 9, 337, 387, 15, 350, 230, 531, 386, 2, 119]; 
-          const filtered = data.results.filter(p => targetIds.includes(p.provider_id) || p.display_priority < 20);
-          
-          const formatted = [
-            { id: null, label: 'All Providers', logo: null },
-            ...filtered.map(p => ({
-              id: p.provider_id,
-              label: p.provider_name,
-              logo: p.logo_path
-            }))
-          ];
-          setProviderList(formatted);
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && Array.isArray(data.results)) {
+            const targetIds = [8, 9, 337, 387, 15, 350, 230, 531, 386, 2, 119]; 
+            const filtered = data.results.filter(p => targetIds.includes(p.provider_id) || (p.display_priority !== undefined && p.display_priority < 25));
+            
+            const formatted = [
+              { id: null, label: 'All Services', logo: null },
+              ...filtered.map(p => ({
+                id: p.provider_id,
+                label: p.provider_name,
+                logo: p.logo_path
+              }))
+            ];
+            setProviderList(formatted);
+          }
         }
       } catch (e) {
-        console.error("Failed to load live providers:", e);
+        console.warn("Failed to load live watch providers:", e);
       }
     };
     fetchProviders();
+    return () => { isCancelled = true; };
   }, [selectedRegion, mediaType]);
 
   const openModal = (item) => {
@@ -168,18 +160,16 @@ export default function FindAFilmPage() {
   };
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const movieId = params.get('movieId');
     const type = params.get('type') || 'movie';
     if (movieId) {
-      queueMicrotask(() => {
-        setSelectedMovieId(movieId);
-        setSelectedMediaType(type);
-      });
+      setSelectedMovieId(movieId);
+      setSelectedMediaType(type);
     }
   }, []);
 
-  // Construct exact TMDB URLs
   const getSingleTypeUrl = useCallback((targetPage, targetType, cat, genre, prov, reg, sort) => {
     if (genre || prov || (sort !== 'popularity.desc' && cat === 'trending')) {
       let endpoint = `https://api.themoviedb.org/3/discover/${targetType}?api_key=${TMDB_API_KEY}&sort_by=${sort}&page=${targetPage}`;
@@ -212,7 +202,6 @@ export default function FindAFilmPage() {
     }
   }, []);
 
-  // Multi-Channel Executor
   const fetchTitlesBatch = useCallback(async (targetPage) => {
     if (searchQuery.trim()) {
       const searchUrl = mediaType === 'all'
@@ -220,6 +209,7 @@ export default function FindAFilmPage() {
         : `https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(searchQuery)}&page=${targetPage}`;
       
       const res = await fetch(searchUrl);
+      if (!res.ok) return [];
       const data = await res.json();
       return (data.results || []).map(item => ({
         ...item,
@@ -229,6 +219,7 @@ export default function FindAFilmPage() {
 
     if (activeCategory === 'trending' && mediaType === 'all' && !selectedGenre && !selectedProvider) {
       const res = await fetch(`https://api.themoviedb.org/3/trending/all/day?api_key=${TMDB_API_KEY}&page=${targetPage}`);
+      if (!res.ok) return [];
       const data = await res.json();
       return (data.results || []).map(item => ({
         ...item,
@@ -241,7 +232,10 @@ export default function FindAFilmPage() {
       const tvUrl = getSingleTypeUrl(targetPage, 'tv', activeCategory, selectedGenre, selectedProvider, selectedRegion, sortBy);
 
       const [movieRes, tvRes] = await Promise.all([fetch(movieUrl), fetch(tvUrl)]);
-      const [movieData, tvData] = await Promise.all([movieRes.json(), tvRes.json()]);
+      const [movieData, tvData] = await Promise.all([
+        movieRes.ok ? movieRes.json() : { results: [] },
+        tvRes.ok ? tvRes.json() : { results: [] }
+      ]);
 
       const moviesList = (movieData.results || []).map(m => ({ ...m, media_type: 'movie' }));
       const tvList = (tvData.results || []).map(t => ({ ...t, media_type: 'tv' }));
@@ -257,6 +251,7 @@ export default function FindAFilmPage() {
 
     const endpoint = getSingleTypeUrl(targetPage, mediaType, activeCategory, selectedGenre, selectedProvider, selectedRegion, sortBy);
     const res = await fetch(endpoint);
+    if (!res.ok) return [];
     const data = await res.json();
     return (data.results || []).map(item => ({ ...item, media_type: mediaType }));
   }, [searchQuery, mediaType, activeCategory, selectedGenre, selectedProvider, selectedRegion, sortBy, getSingleTypeUrl]);
@@ -269,7 +264,7 @@ export default function FindAFilmPage() {
       setMovies(filtered);
       prevCountRef.current = filtered.length;
     } catch (e) {
-      console.error("Failed to fetch feed:", e);
+      console.warn("Satellite provider feed warning:", e);
     } finally {
       setIsLoadingSearch(false);
     }
@@ -283,9 +278,7 @@ export default function FindAFilmPage() {
       return () => clearTimeout(timer);
     }
 
-    queueMicrotask(() => {
-      fetchMovies();
-    });
+    fetchMovies();
   }, [searchQuery, mediaType, activeCategory, selectedGenre, selectedProvider, selectedRegion, sortBy, fetchMovies]);
 
   const handleSearchSubmit = (e) => {
@@ -313,7 +306,7 @@ export default function FindAFilmPage() {
         }, 150);
       }
     } catch (e) {
-      console.error("Failed to fetch more titles:", e);
+      console.warn("Failed to fetch additional provider records:", e);
     } finally {
       setIsLoadingMore(false);
     }
@@ -337,29 +330,30 @@ export default function FindAFilmPage() {
   if (!user) return null;
 
   return (
-    <div className="max-w-7xl mx-auto mt-8 p-6 md:p-8 min-h-[85vh] flex flex-col bg-[#050508] border border-cyan-500/20 rounded-2xl shadow-[0_0_60px_rgba(6,182,212,0.15)] text-white relative overflow-hidden font-sans">
+    <div className="max-w-7xl mx-auto mt-6 md:mt-10 p-5 md:p-8 min-h-[85vh] flex flex-col bg-[#050508] border border-cyan-500/20 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.15)] text-white relative overflow-hidden font-sans">
       
-      {/* Background Ambient Glow Accents */}
+      {/* Background Ambient Accents */}
       <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* HEADER SECTION */}
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-cyan-500/20 pb-6 mb-8 gap-6 relative z-10">
+      {/* HEADER SECTION (CLEAN & SHARP) */}
+      <div className="border-b border-cyan-500/20 pb-8 mb-8 space-y-6 relative z-10">
+        
+        {/* Title & Description */}
         <div className="space-y-2">
-          <h1 className="text-3xl md:text-5xl font-serif italic tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-sky-200 to-indigo-300">
-            Find A Film
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black uppercase tracking-tight text-white">
+            Where To Watch
           </h1>
-          <p className="text-gray-400 text-xs md:text-sm font-light max-w-2xl leading-relaxed">
-            Scan global releases, cross-reference regional streaming availability, and track upcoming titles across all services.
+          <p className="text-slate-400 text-xs sm:text-sm font-normal max-w-2xl leading-relaxed">
+            Cross-reference live regional streaming catalogs, verify release availability across Netflix, Prime Video, Disney+, Apple TV+, and track cinema releases in real-time.
           </p>
         </div>
 
-        <div className="flex items-end gap-4 w-full lg:w-auto flex-wrap sm:flex-nowrap">
-          {/* Select Your Region */}
-          <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-            <label className="text-[10px] font-mono uppercase tracking-wider text-cyan-400/90 font-bold">
-              Select Your Region
-            </label>
+        {/* UNIFIED INPUT COMMAND BAR */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center bg-[#080d1a]/80 p-2.5 rounded-2xl border border-cyan-500/20 backdrop-blur-md shadow-inner">
+          
+          {/* Target Territory */}
+          <div className="md:col-span-3">
             <select
               value={selectedRegion}
               onChange={(e) => {
@@ -370,7 +364,7 @@ export default function FindAFilmPage() {
                   localStorage.setItem('scenesense_region', newReg);
                 }
               }}
-              className="bg-[#0e0e16] border border-cyan-500/30 text-xs font-bold text-cyan-400 rounded-xl px-4 py-3 outline-none focus:border-cyan-400 cursor-pointer shadow-inner"
+              className="w-full bg-[#050811] border border-cyan-500/30 text-xs font-mono font-bold text-cyan-300 rounded-xl px-3.5 py-2.5 outline-none focus:border-cyan-400 cursor-pointer shadow-inner"
             >
               {REGIONS.map((reg) => (
                 <option key={reg.id} value={reg.id}>{reg.label}</option>
@@ -378,33 +372,29 @@ export default function FindAFilmPage() {
             </select>
           </div>
 
-          {/* Media Format Switcher & Search Bar */}
-          <div className="flex flex-col gap-1.5 flex-1 sm:w-96">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] font-mono uppercase tracking-wider text-cyan-400/90 font-bold">
-                Search Format
-              </label>
-              <div className="flex gap-1 bg-[#0e0e16] p-0.5 rounded-lg border border-cyan-500/20">
-                {MEDIA_TYPES.map((type) => (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => {
-                      setPage(1);
-                      setMediaType(type.id);
-                    }}
-                    className={`px-2.5 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                      mediaType === type.id
-                        ? 'bg-cyan-500 text-black shadow-sm'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {type.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {/* Media Format Switcher */}
+          <div className="md:col-span-3 flex bg-[#050811] p-1 rounded-xl border border-cyan-500/20">
+            {MEDIA_TYPES.map((type) => (
+              <button
+                key={type.id}
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  setMediaType(type.id);
+                }}
+                className={`flex-1 py-1.5 text-[10px] font-mono font-bold rounded-lg transition-all cursor-pointer ${
+                  mediaType === type.id
+                    ? 'bg-cyan-500 text-black shadow-sm font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {type.label}
+              </button>
+            ))}
+          </div>
 
+          {/* Search Input Bar */}
+          <div className="md:col-span-6">
             <form onSubmit={handleSearchSubmit} className="flex gap-2">
               <input 
                 type="text"
@@ -413,8 +403,8 @@ export default function FindAFilmPage() {
                   setPage(1);
                   setSearchQuery(e.target.value);
                 }}
-                placeholder={mediaType === 'all' ? "Search movies & TV shows..." : `Search ${mediaType === 'movie' ? 'movies' : 'TV shows'}...`}
-                className="flex-1 bg-[#0e0e16] border border-cyan-500/20 rounded-xl px-4 py-3 text-xs font-medium text-white placeholder-gray-500 focus:outline-none focus:border-cyan-400 transition-all shadow-inner"
+                placeholder={mediaType === 'all' ? "Search all titles..." : `Search ${mediaType === 'movie' ? 'movies' : 'series'}...`}
+                className="w-full bg-[#050811] border border-cyan-500/20 rounded-xl px-4 py-2 text-xs font-medium text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-all shadow-inner font-mono"
               />
               {searchQuery && (
                 <button 
@@ -423,25 +413,29 @@ export default function FindAFilmPage() {
                     setPage(1);
                     setSearchQuery(''); 
                   }}
-                  className="px-4 py-3 bg-[#141420] hover:bg-[#1f1f2e] text-gray-300 text-xs font-bold rounded-xl transition-colors border border-cyan-500/20 cursor-pointer"
+                  className="px-3 py-2 bg-[#141420] hover:bg-[#1f1f2e] text-slate-300 text-xs font-mono font-bold rounded-xl transition-colors border border-cyan-500/20 cursor-pointer"
                 >
-                  Clear
+                  ✕
                 </button>
               )}
             </form>
           </div>
+
         </div>
+
       </div>
 
-      {/* CATEGORIES, PLATFORM, GENRE & SORTING TOOLBAR */}
+      {/* FILTER & TAXONOMY BAR */}
       <div className="flex items-center justify-between mb-8 flex-wrap gap-4 relative z-10">
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+        
+        {/* Category Selection Tabs */}
+        <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {[
-            { id: 'trending', label: 'Trending' },
-            { id: 'popular', label: 'Popular' },
-            { id: 'top_rated', label: 'Top Rated' },
-            { id: 'now_playing', label: 'Now Airing / In Theaters' },
-            { id: 'upcoming', label: 'Upcoming' }
+            { id: 'trending', label: '🔥 Trending' },
+            { id: 'popular', label: '⚡ Popular' },
+            { id: 'top_rated', label: '★ Top Rated' },
+            { id: 'now_playing', label: '🎟 Theaters' },
+            { id: 'upcoming', label: '📡 Upcoming' }
           ].map((cat) => (
             <button
               key={cat.id}
@@ -451,10 +445,10 @@ export default function FindAFilmPage() {
                 setSearchQuery('');
                 setActiveCategory(cat.id);
               }}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all whitespace-nowrap cursor-pointer ${
                 !searchQuery && !selectedGenre && activeCategory === cat.id 
-                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-lg shadow-cyan-600/30 border border-cyan-400/50' 
-                  : 'bg-[#0e0e16] text-gray-400 hover:text-white border border-cyan-500/20 hover:border-cyan-500/40'
+                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.35)] border border-cyan-400/50' 
+                  : 'bg-[#080d1a] text-slate-400 hover:text-white border border-cyan-500/20 hover:border-cyan-500/40'
               }`}
             >
               {cat.label}
@@ -462,63 +456,58 @@ export default function FindAFilmPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* STREAMING PROVIDER BUTTON */}
+        {/* Dropdowns Group */}
+        <div className="flex items-center gap-2.5 flex-wrap">
           <button
             type="button"
             onClick={() => setIsProviderModalOpen(true)}
-            className="flex items-center gap-2.5 bg-[#0e0e16] border border-cyan-500/20 hover:border-cyan-400 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-200 transition-all cursor-pointer shadow-inner"
+            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl text-xs font-mono font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
           >
             {currentProviderObj?.logo ? (
-              <div className="relative w-4 h-4 rounded overflow-hidden bg-white/10 flex-shrink-0">
+              <div className="relative w-3.5 h-3.5 rounded overflow-hidden bg-white/10 shrink-0">
                 <Image
                   src={`https://image.tmdb.org/t/p/w92${currentProviderObj.logo}`}
                   alt={currentProviderObj.label}
                   fill
-                  sizes="16px"
+                  sizes="14px"
                   className="object-cover"
                 />
               </div>
             ) : (
-              <div className="w-4 h-4 rounded bg-cyan-600 flex items-center justify-center text-[8px] font-bold text-white">ALL</div>
+              <div className="w-3.5 h-3.5 rounded bg-cyan-600 flex items-center justify-center text-[7px] font-bold text-white">ALL</div>
             )}
-            <span>{currentProviderObj ? currentProviderObj.label : 'Select Platform'}</span>
-            <svg className="w-3 h-3 text-cyan-400 ml-1 fill-current" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
+            <span>{currentProviderObj ? currentProviderObj.label : 'Service'}</span>
+            <span className="text-[9px] text-cyan-400">▼</span>
           </button>
 
-          {/* GENRES BUTTON */}
           <button
             type="button"
             onClick={() => setIsGenreModalOpen(true)}
-            className="flex items-center gap-2 bg-[#0e0e16] border border-cyan-500/20 hover:border-cyan-400 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-200 transition-all cursor-pointer shadow-inner"
+            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl text-xs font-mono font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
           >
             <span>{currentGenreObj ? currentGenreObj.label : 'All Genres'}</span>
-            <svg className="w-3 h-3 text-cyan-400 ml-1 fill-current" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
+            <span className="text-[9px] text-cyan-400">▼</span>
           </button>
 
-          {/* SORTING SELECTOR */}
           <select
             value={sortBy}
             onChange={(e) => {
               setPage(1);
               setSortBy(e.target.value);
             }}
-            className="bg-[#0e0e16] border border-cyan-500/20 text-xs font-bold text-gray-300 rounded-xl px-4 py-2.5 outline-none focus:border-cyan-400 cursor-pointer transition-all shadow-inner"
+            className="bg-[#080d1a] border border-cyan-500/20 text-xs font-mono font-bold text-slate-300 rounded-xl px-3 py-2 outline-none focus:border-cyan-400 cursor-pointer transition-all shadow-inner"
           >
-            <option value="popularity.desc">Sort: Most Popular</option>
-            <option value="vote_average.desc">Sort: Highest Rated</option>
-            <option value="primary_release_date.desc">Sort: Newest Release</option>
-            <option value="revenue.desc">Sort: Box Office Revenue</option>
+            <option value="popularity.desc">Sort: Popular</option>
+            <option value="vote_average.desc">Sort: Rated</option>
+            <option value="primary_release_date.desc">Sort: Newest</option>
+            <option value="revenue.desc">Sort: Box Office</option>
           </select>
         </div>
+
       </div>
 
       {searchQuery && (
-        <div className="mb-6 text-xs text-cyan-400 font-medium px-1">
+        <div className="mb-6 text-xs text-cyan-400 font-mono font-medium px-1">
           Showing search results for: &quot;<span className="text-white font-bold">{searchQuery}</span>&quot; in <span className="uppercase font-bold text-white">{mediaType}</span>
         </div>
       )}
@@ -526,26 +515,26 @@ export default function FindAFilmPage() {
       {/* TITLES GRID CONTAINER */}
       {isLoadingSearch ? (
         <div className="flex flex-col justify-center items-center py-32 gap-3">
-          <div className="w-10 h-10 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin"></div>
-          <p className="text-xs uppercase tracking-widest text-cyan-400 font-mono">Scanning SceneSense satellite feeds...</p>
+          <div className="w-10 h-10 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
+          <p className="text-xs uppercase tracking-widest text-cyan-400 font-mono">Querying live satellite provider telemetry...</p>
         </div>
       ) : movies.length > 0 ? (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 relative z-10">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5 relative z-10">
             {movies.map((item, index) => {
               const uniqueKey = `${item.id}-${item.media_type || 'title'}-${index}`;
               const isSaved = (watchlist || []).some(w => String(w.id) === String(item.id));
               const displayTitle = item.title || item.name || 'Untitled';
-              const releaseDate = item.release_date || item.first_air_date;
+              const releaseYear = (item.release_date || item.first_air_date || '').slice(0, 4) || 'N/A';
+              const rating = item.vote_average ? Number(item.vote_average).toFixed(1) : null;
               const isFirstOfNewBatch = index === prevCountRef.current;
               
               return (
                 <div 
                   key={uniqueKey}
                   ref={isFirstOfNewBatch ? newBatchRef : null}
-                  className="bg-[#0e0e16] border border-cyan-500/20 rounded-2xl overflow-hidden flex flex-col justify-between group hover:border-cyan-400 hover:shadow-[0_10px_30px_rgba(6,182,212,0.2)] transition-all duration-300"
+                  className="bg-[#080d1a] border border-cyan-500/20 rounded-2xl overflow-hidden flex flex-col justify-between group hover:border-cyan-400 hover:shadow-[0_10px_30px_rgba(6,182,212,0.2)] transition-all duration-300"
                 >
-                  {/* Clickable Poster & Title Area */}
                   <div 
                     onClick={(e) => {
                       e.preventDefault();
@@ -563,32 +552,36 @@ export default function FindAFilmPage() {
                           className="object-cover group-hover:scale-105 transition-transform duration-500"
                         />
                       ) : (
-                        <div className="flex items-center justify-center h-full text-xs text-gray-500 p-2 text-center">{displayTitle}</div>
+                        <div className="flex items-center justify-center h-full text-xs text-slate-500 p-2 text-center font-mono">{displayTitle}</div>
                       )}
-                      <div className="absolute top-2.5 right-2.5 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-black text-amber-400 border border-amber-500/30 shadow-lg z-10">
-                        ★ {item.vote_average ? item.vote_average.toFixed(1) : 'N/A'}
-                      </div>
                     </div>
 
-                    <div className="p-4 pb-2 relative z-10 bg-[#0e0e16]">
-                      <h3 className="font-bold text-xs line-clamp-1 text-white group-hover:text-cyan-300 transition-colors" title={displayTitle}>
+                    <div className="p-3.5 pb-1 relative z-10 bg-[#080d1a]">
+                      <h3 className="font-bold text-xs line-clamp-1 text-white group-hover:text-cyan-300 transition-colors uppercase tracking-tight" title={displayTitle}>
                         {displayTitle}
                       </h3>
-                      <p className="text-gray-400 text-[10px] mt-1 font-mono">{releaseDate ? releaseDate.split('-')[0] : 'N/A'}</p>
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-1">
+                        <span>{releaseYear}</span>
+                        {rating && (
+                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                            <span>★</span> {rating}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="p-4 pt-1 bg-[#0e0e16] relative z-10">
+                  <div className="p-3.5 pt-2 bg-[#080d1a] relative z-10">
                     <button
                       type="button"
                       onClick={(e) => toggleWatchlist(item, e)}
-                      className={`w-full py-2.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 ${
+                      className={`w-full py-2 px-3 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 border ${
                         isSaved 
-                          ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-600/30' 
-                          : 'bg-[#141420] text-gray-300 border border-cyan-500/20 hover:border-cyan-400 hover:text-white'
+                          ? 'bg-cyan-950/70 text-cyan-300 border-cyan-500/50 hover:bg-cyan-900/60 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
+                          : 'bg-[#141420] text-slate-300 border-white/10 hover:border-cyan-400 hover:text-white'
                       }`}
                     >
-                      <span>{isSaved ? 'In Watchlist' : '+ Watchlist'}</span>
+                      <span>{isSaved ? '✓ Saved' : '+ Watchlist'}</span>
                     </button>
                   </div>
                 </div>
@@ -601,38 +594,38 @@ export default function FindAFilmPage() {
               type="button"
               onClick={loadMoreMovies} 
               disabled={isLoadingMore}
-              className="bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:bg-gray-700 text-white px-10 py-3.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(6,182,212,0.4)] cursor-pointer active:scale-95"
+              className="bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:bg-slate-800 text-white px-10 py-3 rounded-xl font-mono font-black text-xs uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(6,182,212,0.4)] cursor-pointer active:scale-95"
             >
               {isLoadingMore ? 'Decrypting feeds...' : 'See More Titles'}
             </button>
-            <span className="text-[10px] font-mono text-gray-500">
-              This product uses the TMDB API but is not endorsed or certified by TMDB.
+            <span className="text-[10px] font-mono text-slate-500">
+              Where to Watch satellite integration powered by TMDB JustWatch feeds.
             </span>
           </div>
         </>
       ) : (
-        <div className="py-32 text-center text-gray-500 text-sm font-mono">No signals found on the SceneSense radar.</div>
+        <div className="py-32 text-center text-slate-500 text-sm font-mono">No signals found on the SceneSense streaming radar.</div>
       )}
 
       {/* STREAMING PROVIDERS POPUP MODAL */}
       {isProviderModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0b0b12] border border-cyan-500/40 w-full max-w-lg p-6 shadow-2xl relative rounded-[24px]">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
+          <div className="bg-[#080d1a] border border-cyan-500/40 w-full max-w-lg p-6 shadow-2xl relative rounded-3xl">
             <div className="flex items-center justify-between pb-4 border-b border-cyan-500/20 mb-6">
               <div>
-                <h3 className="text-lg font-bold text-white">Select Streaming Platform</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Filter releases by preferred service provider</p>
+                <h3 className="text-base font-bold text-white uppercase tracking-tight font-mono">Filter Streaming Service</h3>
+                <p className="text-xs text-slate-400 mt-0.5 font-mono">Available platforms in {selectedRegion}</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsProviderModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer text-sm font-mono"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1 scrollbar-thin">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[60vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
               {providerList.map((prov) => {
                 const isSelected = selectedProvider === prov.id;
                 return (
@@ -644,14 +637,14 @@ export default function FindAFilmPage() {
                       setSelectedProvider(prov.id);
                       setIsProviderModalOpen(false);
                     }}
-                    className={`flex items-center gap-3 p-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-left border ${
+                    className={`flex items-center gap-3 p-3 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer text-left border ${
                       isSelected 
                         ? 'bg-cyan-600/20 border-cyan-400 text-white shadow-lg' 
-                        : 'bg-[#141420] border-cyan-500/10 hover:border-cyan-500/30 text-gray-300 hover:text-white'
+                        : 'bg-[#050811] border-cyan-500/15 hover:border-cyan-500/40 text-slate-300 hover:text-white'
                     }`}
                   >
                     {prov.logo ? (
-                      <div className="relative w-6 h-6 rounded overflow-hidden bg-white/10 flex-shrink-0">
+                      <div className="relative w-6 h-6 rounded overflow-hidden bg-white/10 shrink-0 border border-white/10">
                         <Image
                           src={`https://image.tmdb.org/t/p/w92${prov.logo}`}
                           alt={prov.label}
@@ -661,7 +654,7 @@ export default function FindAFilmPage() {
                         />
                       </div>
                     ) : (
-                      <div className="w-6 h-6 rounded bg-cyan-600 flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0">ALL</div>
+                      <div className="w-6 h-6 rounded bg-cyan-600 flex items-center justify-center text-[8px] font-bold text-white shrink-0">ALL</div>
                     )}
                     <span className="truncate">{prov.label}</span>
                   </button>
@@ -674,23 +667,23 @@ export default function FindAFilmPage() {
 
       {/* GENRES POPUP MODAL */}
       {isGenreModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0b0b12] border border-cyan-500/40 w-full max-w-lg p-6 shadow-2xl relative rounded-[24px]">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
+          <div className="bg-[#080d1a] border border-cyan-500/40 w-full max-w-lg p-6 shadow-2xl relative rounded-3xl">
             <div className="flex items-center justify-between pb-4 border-b border-cyan-500/20 mb-6">
               <div>
-                <h3 className="text-lg font-bold text-white">Select Film Genre</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Browse films by cinematic category</p>
+                <h3 className="text-base font-bold text-white uppercase tracking-tight font-mono">Select Genre Channel</h3>
+                <p className="text-xs text-slate-400 mt-0.5 font-mono">Filter by narrative taxonomy</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsGenreModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer text-sm font-mono"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1 scrollbar-thin">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[60vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
               {GENRES.map((genre) => {
                 const isSelected = selectedGenre === genre.id;
                 return (
@@ -702,10 +695,10 @@ export default function FindAFilmPage() {
                       setSelectedGenre(genre.id);
                       setIsGenreModalOpen(false);
                     }}
-                    className={`p-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center border ${
+                    className={`p-3 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer text-center border ${
                       isSelected 
                         ? 'bg-cyan-600/20 border-cyan-400 text-white shadow-lg' 
-                        : 'bg-[#141420] border-cyan-500/10 hover:border-cyan-500/30 text-gray-300 hover:text-white'
+                        : 'bg-[#050811] border-cyan-500/15 hover:border-cyan-500/40 text-slate-300 hover:text-white'
                     }`}
                   >
                     <span>{genre.label}</span>
