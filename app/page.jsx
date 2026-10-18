@@ -1,7 +1,7 @@
 // File: app/page.jsx
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -113,6 +113,7 @@ export default function HomePage() {
   const [isPersonaMenuOpen, setIsPersonaMenuOpen] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [renderedPool, setRenderedPool] = useState([]);
   const [poolIndex, setPoolIndex] = useState(0);
 
@@ -146,11 +147,9 @@ export default function HomePage() {
 
   // Safe client-side shuffle after mount
   useEffect(() => {
-    queueMicrotask(() => {
-      const shuffled = [...MASTER_QUICK_PICKS].sort(() => Math.random() - 0.5);
-      setActivePicks(shuffled.slice(0, 3));
-      setPicksQueue(shuffled.slice(3));
-    });
+    const shuffled = [...MASTER_QUICK_PICKS].sort(() => Math.random() - 0.5);
+    setActivePicks(shuffled.slice(0, 3));
+    setPicksQueue(shuffled.slice(3));
   }, []);
 
   useEffect(() => {
@@ -171,6 +170,7 @@ export default function HomePage() {
   }, [cooldown]);
 
   useEffect(() => {
+    if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
@@ -178,13 +178,12 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const movieId = params.get('movieId');
     const mediaType = params.get('type') || 'movie';
     if (movieId) {
-      queueMicrotask(() => {
-        setSelectedMedia({ id: movieId, type: mediaType });
-      });
+      setSelectedMedia({ id: movieId, type: mediaType });
     }
   }, []);
 
@@ -211,17 +210,29 @@ export default function HomePage() {
     window.history.pushState({}, '', window.location.pathname);
   };
 
+  // Non-blocking asynchronous TMDB trending fetcher
   useEffect(() => {
+    let isCancelled = false;
     const fetchTrending = async () => {
+      setIsInitialLoading(true);
       try {
-        const res = await fetch(`https://api.themoviedb.org/3/trending/${mediaCategory}/day?api_key=${TMDB_API_KEY}&page=1`);
-        const data = await res.json();
-        if (data.results) setTrendingMovies(data.results);
+        const apiKey = TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
+        const res = await fetch(`https://api.themoviedb.org/3/trending/${mediaCategory}/day?api_key=${apiKey}&page=1`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && Array.isArray(data.results)) {
+            setTrendingMovies(data.results);
+          }
+        }
       } catch (error) {
-        console.error("Failed to fetch trending showcase:", error);
+        console.warn("Non-blocking trending showcase fetch notice:", error);
+      } finally {
+        if (!isCancelled) setIsInitialLoading(false);
       }
     };
+
     fetchTrending();
+    return () => { isCancelled = true; };
   }, [mediaCategory]);
 
   useEffect(() => {
@@ -255,14 +266,17 @@ export default function HomePage() {
     if (isFetchingMore) return;
     setIsFetchingMore(true);
     try {
+      const apiKey = TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
       const nextPage = Math.floor(trendingMovies.length / 20) + 1;
-      const res = await fetch(`https://api.themoviedb.org/3/trending/${mediaCategory}/day?api_key=${TMDB_API_KEY}&page=${nextPage}`);
-      const data = await res.json();
-      if (data.results && data.results.length > 0) {
-        setTrendingMovies((prev) => [...prev, ...data.results]);
+      const res = await fetch(`https://api.themoviedb.org/3/trending/${mediaCategory}/day?api_key=${apiKey}&page=${nextPage}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          setTrendingMovies((prev) => [...prev, ...data.results]);
+        }
       }
     } catch (error) {
-      console.error("Failed to load more titles:", error);
+      console.warn("Failed to load additional titles:", error);
     } finally {
       setIsFetchingMore(false);
     }
@@ -286,7 +300,12 @@ export default function HomePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          mood: queryMood, persona: persona === 'Custom Persona' ? customDirective : persona, category: mediaCategory, isFirstVisit, userId: user?.uid, history: sessionHistory
+          mood: queryMood, 
+          persona: persona === 'Custom Persona' ? customDirective : persona, 
+          category: mediaCategory, 
+          isFirstVisit, 
+          userId: user?.uid, 
+          history: sessionHistory
         })
       });
       
@@ -313,14 +332,17 @@ export default function HomePage() {
 
         if (json.data?.avatar?.dialogue) setAvatarMessage(json.data.avatar.dialogue);
 
-        if (user && batch.length > 0) {
+        if (user && batch.length > 0 && db) {
           await addDoc(collection(db, 'users', user.uid, 'history'), {
-            mood: queryMood, persona, movieTitle: batch[0].title || batch[0].name, timestamp: serverTimestamp()
+            mood: queryMood, 
+            persona, 
+            movieTitle: batch[0].title || batch[0].name, 
+            timestamp: serverTimestamp()
           });
         }
       }
     } catch (error) {
-      console.error("Fetch failed:", error);
+      console.error("Neural recommend dispatch failed:", error);
     } finally {
       setIsLoading(false);
     }
@@ -384,7 +406,7 @@ export default function HomePage() {
   const allPersonas = [...FREE_PERSONAS, ...VIP_PERSONAS];
   const currentPersonaObj = allPersonas.find(p => p.id === persona) || FREE_PERSONAS[0];
 
-  const getTerminalTheme = () => {
+  const getTerminalTheme = useCallback(() => {
     switch (persona) {
       case 'The Director':
         return { border: 'border-cyan-500', glow: 'shadow-[0_0_30px_rgba(6,182,212,0.3)]', accent: 'text-cyan-400', button: 'from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500' };
@@ -409,49 +431,49 @@ export default function HomePage() {
       default: // SceneSense
         return { border: 'border-cyan-400', glow: 'shadow-[0_0_30px_rgba(6,182,212,0.35)]', accent: 'text-cyan-300', button: 'from-cyan-600 via-emerald-500 to-teal-600 hover:from-cyan-500 hover:to-teal-500' };
     }
-  };
+  }, [persona]);
 
   const theme = getTerminalTheme();
 
   return (
-    <main className="min-h-[calc(100vh-64px)] w-full text-white font-sans bg-black selection:bg-emerald-500/40 relative flex flex-col justify-between overflow-x-hidden">
+    <main className="min-h-[calc(100vh-64px)] w-full text-white font-sans bg-[#050508] selection:bg-cyan-500/40 relative flex flex-col justify-between overflow-x-hidden">
       
       {/* BACKGROUND COLLAGE WITH CLEAN FOCUS MASK */}
-      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none flex items-center justify-center bg-black">
-        <div className="absolute inset-0 grid grid-cols-4 md:grid-cols-7 gap-3 opacity-30 blur-[1px] grayscale-[30%] scale-105 pointer-events-none transform -rotate-2">
-          {trendingMovies.concat(trendingMovies).slice(0, 28).map((m, idx) => (
-            <div key={idx} className="relative aspect-[2/3] w-full overflow-hidden rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] border border-white/5">
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none flex items-center justify-center bg-[#050508]">
+        <div className="absolute inset-0 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 opacity-25 blur-[1.5px] grayscale-[25%] scale-105 pointer-events-none transform -rotate-1">
+          {trendingMovies.concat(trendingMovies).slice(0, 24).map((m, idx) => (
+            <div key={`bg-poster-${m.id || idx}-${idx}`} className="relative aspect-[2/3] w-full overflow-hidden rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] border border-white/5">
               {m.poster_path && (
                 <Image 
                   src={`https://image.tmdb.org/t/p/w400${m.poster_path}`} 
                   alt="" 
                   fill 
-                  sizes="(max-width: 768px) 25vw, 15vw"
+                  sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, (max-width: 1024px) 16vw, 12vw"
                   className="object-cover" 
                 />
               )}
             </div>
           ))}
         </div>
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-[1.5px]"></div>
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black pointer-events-none"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,black_80%)] pointer-events-none"></div>
+        <div className="absolute inset-0 bg-[#050508]/75 backdrop-blur-[2px]"></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-transparent to-[#050508] pointer-events-none"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#050508_85%)] pointer-events-none"></div>
       </div>
 
-      <div className="relative z-10 flex flex-col min-h-screen justify-between pt-10">
+      <div className="relative z-10 flex flex-col min-h-screen justify-between pt-8 sm:pt-10">
         
         {/* GUEST ACCESS CONTROLS */}
         {!user && (
-          <div className="absolute top-6 right-6 z-30 flex items-center gap-3">
+          <div className="absolute top-4 sm:top-6 right-4 sm:right-6 z-30 flex items-center gap-2.5 sm:gap-3">
             <button
               onClick={() => router.push('/login')}
-              className="px-4 py-2 bg-black/80 hover:bg-black border border-cyan-500/60 hover:border-cyan-400 text-cyan-300 hover:text-white rounded-xl text-xs font-mono font-bold tracking-wider uppercase shadow-[0_0_15px_rgba(6,182,212,0.3)] backdrop-blur-md transition-all cursor-pointer"
+              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-black/80 hover:bg-black border border-cyan-500/60 hover:border-cyan-400 text-cyan-300 hover:text-white rounded-xl text-[10px] sm:text-xs font-mono font-bold tracking-wider uppercase shadow-[0_0_15px_rgba(6,182,212,0.3)] backdrop-blur-md transition-all cursor-pointer"
             >
               Sign In
             </button>
             <button
               onClick={() => router.push('/signup')}
-              className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-cyan-600 hover:opacity-90 text-black rounded-xl text-xs font-mono font-bold tracking-wider uppercase shadow-[0_0_15px_rgba(52,211,153,0.4)] backdrop-blur-md transition-all cursor-pointer"
+              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-emerald-500 to-cyan-600 hover:opacity-90 text-black rounded-xl text-[10px] sm:text-xs font-mono font-bold tracking-wider uppercase shadow-[0_0_15px_rgba(52,211,153,0.4)] backdrop-blur-md transition-all cursor-pointer"
             >
               Create Account
             </button>
@@ -459,19 +481,19 @@ export default function HomePage() {
         )}
 
         {/* HERO COMMAND SECTION */}
-        <section className="w-full max-w-7xl mx-auto px-6 pb-12 flex flex-col items-center relative z-10 space-y-6">
+        <section className="w-full max-w-7xl mx-auto px-4 sm:px-6 pb-12 flex flex-col items-center relative z-10 space-y-6">
           
           {/* FLOATING TITLE BANNER */}
-          <div className="w-full max-w-4xl text-center space-y-2.5 relative">
+          <div className="w-full max-w-4xl text-center space-y-3 relative pt-4 sm:pt-0">
             <div className="absolute -inset-6 bg-cyan-500/10 blur-3xl rounded-full pointer-events-none"></div>
-            <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-black/90 border border-emerald-400/60 shadow-[0_0_15px_rgba(52,211,153,0.3)] text-[10px] font-mono tracking-[0.25em] text-emerald-300 font-bold uppercase backdrop-blur-md">
+            <span className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-black/90 border border-emerald-400/60 shadow-[0_0_15px_rgba(52,211,153,0.3)] text-[9px] sm:text-[10px] font-mono tracking-[0.25em] text-emerald-300 font-bold uppercase backdrop-blur-md">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              BETA VERSION
+              PRODUCTION SYSTEM READY
             </span>
-            <h1 className="text-4xl sm:text-6xl font-black tracking-tighter text-white uppercase drop-shadow-[0_4px_25px_rgba(0,0,0,1)]">
+            <h1 className="text-3xl sm:text-5xl md:text-6xl font-black tracking-tighter text-white uppercase drop-shadow-[0_4px_25px_rgba(0,0,0,1)]">
               SCENESENSE <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-emerald-400 to-indigo-400 drop-shadow-[0_0_20px_rgba(6,182,212,0.6)]">STUDIO</span>
             </h1>
-            <p className="text-sm sm:text-base font-extrabold text-cyan-200 tracking-wide uppercase drop-shadow-[0_2px_12px_rgba(0,0,0,1)]">
+            <p className="text-xs sm:text-sm md:text-base font-extrabold text-cyan-200 tracking-wider uppercase drop-shadow-[0_2px_12px_rgba(0,0,0,1)]">
               Tell us your mood. We&apos;ll find your movie.
             </p>
           </div>
@@ -488,7 +510,7 @@ export default function HomePage() {
 
             {/* CUSTOM PERSONA INPUT FIELD */}
             {persona === 'Custom Persona' && (
-              <div className="p-4 bg-black/95 border border-cyan-400/60 rounded-2xl space-y-2 backdrop-blur-2xl animate-fadeIn shadow-2xl">
+              <div className="p-4 bg-black/95 border border-cyan-400/60 rounded-2xl space-y-2 backdrop-blur-2xl shadow-2xl">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
                     ✨ Custom Persona Neural Prompt
@@ -500,21 +522,21 @@ export default function HomePage() {
                   value={customDirective} 
                   onChange={(e) => setCustomDirective(e.target.value)} 
                   placeholder="E.g., Speak like a 1920s hardboiled detective who only recommends gritty crime capers..." 
-                  className="w-full bg-black border border-cyan-400/40 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-300"
+                  className="w-full bg-[#050811] border border-cyan-400/40 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-300 font-mono"
                 />
               </div>
             )}
 
             {/* UNIFIED PROMPT STATION & PERSONA HUB */}
             <form onSubmit={(e) => { e.preventDefault(); executeRecommendation(); }} className="space-y-4">
-              <div className={`relative flex items-center bg-black/90 border-2 ${theme.border} rounded-2xl p-1.5 ${theme.glow} backdrop-blur-2xl transition-all shadow-2xl gap-2`}>
+              <div className={`relative flex items-center bg-[#080d1a]/95 border-2 ${theme.border} rounded-2xl p-1.5 ${theme.glow} backdrop-blur-2xl transition-all shadow-2xl gap-2`}>
                 
                 {/* INLINE PERSONA TRIGGER */}
                 <div className="relative shrink-0" ref={menuRef}>
                   <button
                     type="button"
                     onClick={() => setIsPersonaMenuOpen(!isPersonaMenuOpen)}
-                    className="h-11 px-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-mono font-bold text-cyan-200 uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap"
+                    className="h-11 px-3 sm:px-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-mono font-bold text-cyan-200 uppercase tracking-wider flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer whitespace-nowrap"
                   >
                     <span className={theme.accent}>✦</span>
                     <span className="hidden sm:inline">{currentPersonaObj.label}</span>
@@ -524,7 +546,7 @@ export default function HomePage() {
 
                   {/* POPUP PERSONA DIRECTORY */}
                   {isPersonaMenuOpen && (
-                    <div className="absolute left-0 top-full mt-3 w-80 sm:w-96 bg-black/95 border-2 border-cyan-500/50 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.95)] backdrop-blur-2xl z-50 animate-fadeIn space-y-4">
+                    <div className="absolute left-0 top-full mt-3 w-76 sm:w-96 bg-[#080d1a] border-2 border-cyan-500/50 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.95)] backdrop-blur-2xl z-50 space-y-4">
                       
                       {/* Curators Section */}
                       <div className="space-y-2">
@@ -558,7 +580,7 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      {/* Genre Specialists & Custom Section (Unlocked) */}
+                      {/* Genre Specialists & Custom Section */}
                       <div className="space-y-2 pt-2 border-t border-white/10">
                         <div className="flex items-center justify-between px-1">
                           <span className="text-[9px] font-mono text-cyan-400 uppercase tracking-widest font-bold">
@@ -613,10 +635,10 @@ export default function HomePage() {
                 <button 
                   type="submit" 
                   disabled={isLoading || !mood || cooldown > 0}
-                  className={`shrink-0 px-5 sm:px-6 h-11 bg-gradient-to-r ${theme.button} disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg flex items-center justify-center min-w-[120px] drop-shadow-md`}
+                  className={`shrink-0 px-4 sm:px-6 h-11 bg-gradient-to-r ${theme.button} disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg flex items-center justify-center min-w-[110px] sm:min-w-[120px] drop-shadow-md font-mono`}
                 >
                   {isLoading ? (
-                    <span className="flex items-center gap-2 font-mono text-white animate-pulse">
+                    <span className="flex items-center gap-1.5 text-white animate-pulse">
                       <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
                       Scanning...
                     </span>
@@ -631,14 +653,14 @@ export default function HomePage() {
               {/* QUICK PICKS ROW */}
               <div className="flex items-center gap-2 pt-1 flex-wrap px-1 justify-center">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold">Quick Picks:</span>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap justify-center">
                   {activePicks.map((pick) => (
                     <button
                       key={pick}
                       type="button"
                       disabled={cooldown > 0}
                       onClick={() => handleSelectQuickPick(pick)}
-                      className="px-3 py-1.5 bg-black/80 hover:bg-white/15 border border-white/15 hover:border-white/35 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-[11px] text-gray-300 hover:text-white transition-all cursor-pointer shadow-md flex items-center gap-1.5 backdrop-blur-xl group"
+                      className="px-3 py-1.5 bg-[#080d1a] hover:bg-white/15 border border-cyan-500/20 hover:border-cyan-400/60 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-[11px] text-gray-300 hover:text-white transition-all cursor-pointer shadow-md flex items-center gap-1.5 backdrop-blur-xl group"
                     >
                       <span className={`${theme.accent} text-xs group-hover:scale-110 transition-transform`}>⚡</span>
                       <span>{pick}</span>
@@ -650,7 +672,7 @@ export default function HomePage() {
           </div>
 
           {avatarMessage && (
-            <div className={`w-full max-w-3xl p-5 bg-black/95 border ${theme.border} rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.95)] flex items-start gap-4 text-left animate-fadeIn backdrop-blur-2xl`}>
+            <div className={`w-full max-w-3xl p-5 bg-[#080d1a] border ${theme.border} rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.95)] flex items-start gap-4 text-left backdrop-blur-2xl`}>
               <span className="text-2xl drop-shadow-[0_0_8px_currentColor]">🎙️</span>
               <div>
                 <span className={`text-[10px] font-mono ${theme.accent} uppercase font-bold block mb-1`}>
@@ -661,23 +683,23 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* ACQUIRED TARGETS FEED - SCROLL CAROUSEL & NEON SCHEME */}
+          {/* ACQUIRED TARGETS FEED */}
           {recommendations.length > 0 && (
-            <div className={`w-full mt-8 p-6 sm:p-8 bg-black/95 border ${theme.border} rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,1)] backdrop-blur-2xl space-y-6 animate-fadeIn text-left`}>
+            <div className={`w-full mt-8 p-5 sm:p-8 bg-[#080d1a] border ${theme.border} rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,1)] backdrop-blur-2xl space-y-6 text-left`}>
               
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/15 pb-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-cyan-500/20 pb-4">
                 <div>
                   <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider drop-shadow-sm flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${theme.accent.replace('text-', 'bg-')} animate-ping shadow-[0_0_10px_currentColor]`}></span>
                     Acquired Targets
                   </h3>
-                  <p className="text-xs text-gray-300 mt-1">Showing {recommendations.length} options • 1 Primary Selection Chosen</p>
+                  <p className="text-xs text-gray-300 mt-1 font-mono">Showing {recommendations.length} options • 1 Primary Selection Chosen</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => executeRecommendation()}
                     disabled={cooldown > 0 || isLoading}
-                    className="px-4 py-2.5 bg-black/80 hover:bg-white/20 border border-white/30 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md backdrop-blur-xl"
+                    className="px-4 py-2 bg-black/80 hover:bg-white/20 border border-cyan-500/30 hover:border-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-white font-mono font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md backdrop-blur-xl"
                   >
                     {cooldown > 0 ? `Wait ${cooldown}s` : '🔄 Reroll'}
                   </button>
@@ -685,15 +707,21 @@ export default function HomePage() {
               </div>
 
               {primaryPick && (
-                <div className={`p-5 bg-gradient-to-r from-black via-black/90 to-black border ${theme.border} rounded-2xl shadow-2xl flex flex-col md:flex-row gap-5 items-center backdrop-blur-2xl`}>
+                <div className={`p-4 sm:p-5 bg-gradient-to-r from-black via-[#080d1a] to-black border ${theme.border} rounded-2xl shadow-2xl flex flex-col md:flex-row gap-5 items-center backdrop-blur-2xl`}>
                   <div 
                     onClick={() => openMovieModal(primaryPick.id, primaryPick.media_type || mediaCategory)}
                     className={`relative w-28 sm:w-32 aspect-[2/3] rounded-xl overflow-hidden shrink-0 cursor-pointer border ${theme.border} shadow-2xl group`}
                   >
                     {primaryPick.poster_path ? (
-                      <Image src={`https://image.tmdb.org/t/p/w300${primaryPick.poster_path}`} alt={primaryPick.title || primaryPick.name} fill className="object-cover group-hover:scale-105 transition-transform" />
+                      <Image 
+                        src={`https://image.tmdb.org/t/p/w300${primaryPick.poster_path}`} 
+                        alt={primaryPick.title || primaryPick.name} 
+                        fill 
+                        sizes="(max-width: 768px) 112px, 128px"
+                        className="object-cover group-hover:scale-105 transition-transform" 
+                      />
                     ) : (
-                      <div className="absolute inset-0 bg-black flex items-center justify-center text-[10px]">No Signal</div>
+                      <div className="absolute inset-0 bg-[#0c1426] flex items-center justify-center text-[10px] font-mono">No Signal</div>
                     )}
                     <div className="absolute top-1 left-1 bg-white text-black px-1.5 py-0.5 rounded text-[8px] font-black uppercase">
                       Top Choice
@@ -704,7 +732,7 @@ export default function HomePage() {
                       <span className={`px-2 py-0.5 bg-white/10 ${theme.accent} border ${theme.border} rounded text-[9px] font-mono uppercase tracking-widest font-bold`}>
                         Oracle Selection
                       </span>
-                      <h4 className="text-lg font-black text-white">{primaryPick.title || primaryPick.name}</h4>
+                      <h4 className="text-base sm:text-lg font-black text-white">{primaryPick.title || primaryPick.name}</h4>
                     </div>
                     <p className="text-xs text-gray-300 leading-relaxed font-medium">
                       <strong className={`${theme.accent} font-mono uppercase text-[10px] block mb-0.5`}>Why the Oracle chose this:</strong>
@@ -714,7 +742,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* HORIZONTAL CAROUSEL WITH LEFT/RIGHT CONTROLS */}
+              {/* HORIZONTAL CAROUSEL WITH CONTROLS */}
               <div className="relative group/acquired">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-mono uppercase tracking-widest text-gray-300 font-bold block">
@@ -742,7 +770,7 @@ export default function HomePage() {
 
                 <div 
                   ref={acquiredScrollRef}
-                  className="flex gap-5 overflow-x-auto snap-x snap-mandatory pb-4 pt-1 px-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
+                  className="flex gap-4 sm:gap-5 overflow-x-auto snap-x snap-mandatory pb-4 pt-1 px-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
                 >
                   {recommendations.map((item, idx) => {
                     const isSaved = watchlist.some(s => String(s.id) === String(item.id));
@@ -752,50 +780,50 @@ export default function HomePage() {
 
                     return (
                       <div 
-                        key={item.id || idx} 
+                        key={`acquired-${item.id || idx}-${idx}`} 
                         onClick={() => openMovieModal(item.id, itemType)}
-                        className={`group relative w-[240px] sm:w-[280px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-black/90 border transition-all duration-500 shadow-2xl flex flex-col justify-end backdrop-blur-xl ${
+                        className={`group relative w-[220px] sm:w-[260px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-[#080d1a] border transition-all duration-500 shadow-2xl flex flex-col justify-end backdrop-blur-xl ${
                           isSelectedPrimary 
                             ? `${theme.border} ring-2 ring-current${theme.glow}` 
-                            : 'border-white/20 hover:border-cyan-400'
+                            : 'border-cyan-500/20 hover:border-cyan-400'
                         }`}
                       >
                         {item.poster_path ? (
                           <Image 
                             src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} 
                             alt={titleText} 
-                            sizes="280px" 
+                            sizes="(max-width: 640px) 220px, 260px" 
                             fill 
                             className="object-cover group-hover:scale-105 transition-transform duration-500" 
                           />
                         ) : (
-                          <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-500 bg-black">No Signal</div>
+                          <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-500 bg-[#080d1a] font-mono">No Signal</div>
                         )}
                         
                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-90 group-hover:opacity-95 transition-opacity duration-500"></div>
                         
                         <div className="absolute top-3 left-3 flex gap-1.5 flex-wrap">
-                          <span className="bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/20 text-[10px] font-black uppercase tracking-widest text-white">
+                          <span className="bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/20 text-[10px] font-black uppercase tracking-widest text-white font-mono">
                             9{9 - (idx % 10)}% Match
                           </span>
                           {isSelectedPrimary && (
-                            <span className={`bg-gradient-to-r ${theme.button} text-white px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest shadow-md`}>
+                            <span className={`bg-gradient-to-r ${theme.button} text-white px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest shadow-md font-mono`}>
                               Selected
                             </span>
                           )}
                         </div>
 
                         <div className="absolute bottom-0 left-0 right-0 p-4 flex flex-col justify-end">
-                          <p className="text-base font-extrabold text-white line-clamp-1 leading-tight drop-shadow-lg mb-1.5">{titleText}</p>
+                          <p className="text-sm sm:text-base font-extrabold text-white line-clamp-1 leading-tight drop-shadow-lg mb-2">{titleText}</p>
                           
                           <div className="flex items-center justify-between">
-                            <span className={`text-[10px] font-bold uppercase tracking-widest ${theme.accent} flex items-center gap-1`}>
+                            <span className={`text-[10px] font-bold uppercase tracking-widest ${theme.accent} flex items-center gap-1 font-mono`}>
                               Inspect <span className="text-xs">→</span>
                             </span>
                             <button 
                               onClick={(e) => { e.stopPropagation(); toggleWatchlist(item, e); }} 
-                              className={`px-3.5 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer border backdrop-blur-md ${
-                                isSaved ? 'bg-white text-black border-white' : 'bg-black/90 text-white border-white/30 hover:bg-white hover:text-black'
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer border backdrop-blur-md ${
+                                isSaved ? 'bg-cyan-500 text-black border-cyan-400 font-bold' : 'bg-black/90 text-white border-white/30 hover:bg-white hover:text-black'
                               }`}
                             >
                               {isSaved ? '✓ Saved' : '+ Watchlist'}
@@ -808,11 +836,11 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* MATCHED THEME BUTTON (REPLACES BRIGHT ORANGE) */}
+              {/* EXPAND POOL BUTTON */}
               <div className="pt-2 flex justify-center">
                 <button
                   onClick={handleRecommendMore}
-                  className={`w-full py-4 bg-gradient-to-r ${theme.button} hover:opacity-95 text-white font-black uppercase tracking-wider rounded-2xl transition-all cursor-pointer shadow-2xl flex items-center justify-center gap-2 text-xs sm:text-sm drop-shadow-md border border-white/10`}
+                  className={`w-full py-3.5 sm:py-4 bg-gradient-to-r ${theme.button} hover:opacity-95 text-white font-black uppercase tracking-wider rounded-2xl transition-all cursor-pointer shadow-2xl flex items-center justify-center gap-2 text-xs sm:text-sm drop-shadow-md border border-white/10 font-mono`}
                 >
                   <span>⚡ Recommend More ({renderedPool.length} Titles Available in Pool)</span>
                 </button>
@@ -822,19 +850,19 @@ export default function HomePage() {
           )}
         </section>
 
-        {/* TRENDING GLOBAL HORIZONTAL CAROUSEL */}
-        <section className="w-full max-w-7xl mx-auto px-6 py-10 border-t border-white/20 bg-black/85 backdrop-blur-2xl relative group/carousel">
+        {/* TRENDING GLOBAL SHOWCASE SECTION */}
+        <section className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-10 border-t border-cyan-500/20 bg-[#080d1a]/80 backdrop-blur-2xl relative group/carousel">
           <div className="flex items-center justify-between mb-8 flex-wrap gap-4 px-2 sm:px-0">
-            <h3 className="text-sm font-mono uppercase tracking-[0.2em] text-white font-bold flex items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-mono uppercase tracking-[0.2em] text-white font-bold flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${theme.accent.replace('text-', 'bg-')} animate-ping shadow-[0_0_12px_currentColor]`}></span>
               🎬 Trending Global
             </h3>
             
             {/* GLOWING MODE SWITCHER */}
-            <div className="flex bg-black/90 border border-white/20 rounded-2xl p-1 gap-1 shadow-inner backdrop-blur-xl">
+            <div className="flex bg-black/90 border border-cyan-500/30 rounded-2xl p-1 gap-1 shadow-inner backdrop-blur-xl">
               <button 
                 onClick={() => handleCategorySwitch('movie')} 
-                className={`px-5 py-2 rounded-xl text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
+                className={`px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
                   mediaCategory === 'movie' 
                     ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-black shadow-[0_0_15px_rgba(6,182,212,0.4)]' 
                     : 'text-gray-400 hover:text-white'
@@ -844,7 +872,7 @@ export default function HomePage() {
               </button>
               <button 
                 onClick={() => handleCategorySwitch('tv')} 
-                className={`px-5 py-2 rounded-xl text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
+                className={`px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
                   mediaCategory === 'tv' 
                     ? 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-black shadow-[0_0_15px_rgba(6,182,212,0.4)]' 
                     : 'text-gray-400 hover:text-white'
@@ -855,17 +883,36 @@ export default function HomePage() {
             </div>
           </div>
 
-          <button onClick={() => scrollTrending('left')} className="absolute left-2 top-1/2 mt-4 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-black hover:bg-black/80 border border-white/30 backdrop-blur-xl hidden sm:flex items-center justify-center text-white opacity-0 group-hover/carousel:opacity-100 transition-all hover:scale-110 shadow-2xl">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
+          <button 
+            type="button"
+            onClick={() => scrollTrending('left')} 
+            className="absolute left-2 top-1/2 mt-4 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-black/90 hover:bg-black border border-cyan-500/40 backdrop-blur-xl hidden sm:flex items-center justify-center text-white opacity-0 group-hover/carousel:opacity-100 transition-all hover:scale-110 shadow-2xl cursor-pointer"
+            aria-label="Scroll carousel left"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
           </button>
 
-          <div className="absolute right-6 top-0 bottom-0 w-24 bg-gradient-to-l from-black to-transparent pointer-events-none z-10 hidden sm:block"></div>
+          <div className="absolute right-6 top-0 bottom-0 w-24 bg-gradient-to-l from-[#050508] to-transparent pointer-events-none z-10 hidden sm:block"></div>
 
-          {trendingMovies.length > 0 && (
+          {/* SKELETON SHIMMER PLACEHOLDERS DURING INITIAL LOAD */}
+          {isInitialLoading && trendingMovies.length === 0 ? (
+            <div className="flex gap-4 sm:gap-5 overflow-hidden pb-4 pt-2 px-2 sm:px-0">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div 
+                  key={`skeleton-${i}`} 
+                  className="w-[150px] sm:w-[180px] md:w-[200px] shrink-0 aspect-[2/3] rounded-2xl bg-[#0e1424] border border-cyan-500/15 animate-pulse flex flex-col justify-end p-4"
+                >
+                  <div className="w-16 h-3 bg-cyan-950/60 rounded mb-2"></div>
+                  <div className="w-full h-4 bg-cyan-900/40 rounded mb-2"></div>
+                  <div className="w-2/3 h-3 bg-cyan-950/60 rounded"></div>
+                </div>
+              ))}
+            </div>
+          ) : trendingMovies.length > 0 ? (
             <div 
               ref={scrollRef}
               onScroll={handleScrollCapture}
-              className="flex gap-5 overflow-x-auto snap-x snap-mandatory pb-4 pt-2 px-2 sm:px-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
+              className="flex gap-4 sm:gap-5 overflow-x-auto snap-x snap-mandatory pb-4 pt-2 px-2 sm:px-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
             >
               {trendingMovies.map((item, idx) => {
                 const isSaved = watchlist.some(s => String(s.id) === String(item.id));
@@ -874,19 +921,25 @@ export default function HomePage() {
 
                 return (
                   <div 
-                    key={`${item.id}-${idx}`} 
+                    key={`trending-${item.id}-${idx}`} 
                     onClick={() => openMovieModal(item.id, mediaCategory)} 
-                    className="group relative w-[160px] sm:w-[180px] md:w-[200px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-black/90 border border-white/20 hover:border-cyan-400 transition-all duration-500 shadow-2xl hover:-translate-y-1.5 backdrop-blur-xl"
+                    className="group relative w-[150px] sm:w-[180px] md:w-[200px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 transition-all duration-300 shadow-xl hover:-translate-y-1.5 backdrop-blur-xl"
                   >
                     {item.poster_path ? (
-                      <Image src={`https://image.tmdb.org/t/p/w300${item.poster_path}`} alt={titleText} sizes="200px" fill className="object-cover group-hover:scale-110 transition-transform duration-700" />
+                      <Image 
+                        src={`https://image.tmdb.org/t/p/w300${item.poster_path}`} 
+                        alt={titleText} 
+                        sizes="(max-width: 640px) 150px, (max-width: 768px) 180px, 200px" 
+                        fill 
+                        className="object-cover group-hover:scale-105 transition-transform duration-500" 
+                      />
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">N/A</div>
+                      <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-gray-500">N/A</div>
                     )}
                     
-                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent opacity-80 group-hover:opacity-95 transition-opacity"></div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent opacity-85 group-hover:opacity-95 transition-opacity"></div>
                     
-                    <div className="absolute bottom-0 left-0 right-0 p-4 flex flex-col justify-end h-full">
+                    <div className="absolute bottom-0 left-0 right-0 p-3.5 sm:p-4 flex flex-col justify-end h-full">
                       <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-mono font-bold text-cyan-300">
                         {releaseYear && <span>{releaseYear}</span>}
                         {item.vote_average > 0 && (
@@ -901,15 +954,15 @@ export default function HomePage() {
                         {titleText}
                       </p>
                       
-                      <div className="flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <div className="flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                         <span className="text-[10px] font-mono text-gray-300 uppercase font-bold flex items-center gap-1">
                           Inspect <span className="text-xs">→</span>
                         </span>
                         <button 
                           onClick={(e) => { e.stopPropagation(); toggleWatchlist(item, e); }} 
                           aria-label="Add to Watchlist"
-                          className={`w-8 h-8 rounded-full flex items-center justify-center border text-xs transition-all ${
-                            isSaved ? 'bg-white border-white text-black' : 'bg-black/90 border-white/30 text-white hover:bg-white hover:text-black'
+                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border text-xs transition-all cursor-pointer ${
+                            isSaved ? 'bg-cyan-500 border-cyan-400 text-black font-bold' : 'bg-black/90 border-white/30 text-white hover:bg-white hover:text-black'
                           }`}
                         >
                           {isSaved ? '✓' : '+'}
@@ -922,42 +975,51 @@ export default function HomePage() {
 
               <div 
                 onClick={loadMoreTrending}
-                className="group relative w-[160px] sm:w-[180px] md:w-[200px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-black/80 border-2 border-dashed border-white/30 hover:border-cyan-400 transition-all duration-500 shadow-2xl hover:-translate-y-1.5 flex flex-col items-center justify-center text-center p-6 backdrop-blur-xl"
+                className="group relative w-[150px] sm:w-[180px] md:w-[200px] shrink-0 snap-start aspect-[2/3] rounded-2xl overflow-hidden cursor-pointer bg-[#080d1a] border-2 border-dashed border-cyan-500/30 hover:border-cyan-400 transition-all duration-300 shadow-xl hover:-translate-y-1.5 flex flex-col items-center justify-center text-center p-6 backdrop-blur-xl"
               >
-                <div className="w-12 h-12 rounded-full bg-white/10 group-hover:bg-cyan-500/20 border border-white/30 group-hover:border-cyan-400 flex items-center justify-center text-white mb-4 transition-all shadow-md">
+                <div className="w-11 h-11 rounded-full bg-cyan-950/60 group-hover:bg-cyan-500/20 border border-cyan-500/30 group-hover:border-cyan-400 flex items-center justify-center text-cyan-300 mb-3 transition-all shadow-md font-mono">
                   {isFetchingMore ? (
-                    <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                    <span className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
                   ) : (
                     <span className="text-xl font-bold">+</span>
                   )}
                 </div>
-                <h4 className="text-sm font-black uppercase tracking-wider text-white">
+                <h4 className="text-xs sm:text-sm font-black uppercase tracking-wider text-white font-mono">
                   {isFetchingMore ? 'Loading...' : 'More Titles'}
                 </h4>
-                <p className="text-[10px] text-gray-400 mt-1 font-mono uppercase tracking-widest">
+                <p className="text-[9px] sm:text-[10px] text-cyan-400/80 mt-1 font-mono uppercase tracking-widest">
                   Expand Feed
                 </p>
               </div>
 
             </div>
-          )}
+          ) : null}
 
-          <button onClick={() => scrollTrending('right')} className="absolute right-2 top-1/2 mt-4 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-black hover:bg-black/80 border border-white/30 backdrop-blur-xl hidden sm:flex items-center justify-center text-white opacity-0 group-hover/carousel:opacity-100 transition-all hover:scale-110 shadow-2xl">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
+          <button 
+            type="button"
+            onClick={() => scrollTrending('right')} 
+            className="absolute right-2 top-1/2 mt-4 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-black/90 hover:bg-black border border-cyan-500/40 backdrop-blur-xl hidden sm:flex items-center justify-center text-white opacity-0 group-hover/carousel:opacity-100 transition-all hover:scale-110 shadow-2xl cursor-pointer"
+            aria-label="Scroll carousel right"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m9 18 6-6-6-6"/></svg>
           </button>
         </section>
       </div>
 
-      {selectedMedia?.type === 'tv' ? <TVModal tvId={selectedMedia?.id} onClose={closeMovieModal} /> : <MovieModal movieId={selectedMedia?.id} onClose={closeMovieModal} />}
+      {selectedMedia?.type === 'tv' ? (
+        <TVModal tvId={selectedMedia?.id} onClose={closeMovieModal} />
+      ) : (
+        <MovieModal movieId={selectedMedia?.id} onClose={closeMovieModal} />
+      )}
 
-      <footer className="w-full max-w-7xl mx-auto px-6 py-8 border-t border-white/20 text-gray-400 text-xs flex flex-col items-center justify-center gap-3 relative z-10 backdrop-blur-2xl bg-black text-center">
-        <div className="flex items-center gap-5 text-gray-300 flex-wrap justify-center font-medium">
+      <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 border-t border-cyan-500/20 text-gray-400 text-xs flex flex-col items-center justify-center gap-3 relative z-10 backdrop-blur-2xl bg-[#050508] text-center">
+        <div className="flex items-center gap-4 sm:gap-5 text-gray-300 flex-wrap justify-center font-medium">
           <Link href="/privacy" className="hover:text-cyan-300 transition-colors">Privacy Policy</Link><span className="text-gray-600">•</span>
           <Link href="/terms" className="hover:text-cyan-300 transition-colors">Terms of Service</Link><span className="text-gray-600">•</span>
           <Link href="/disclaimer" className="hover:text-cyan-300 transition-colors">Disclaimer</Link><span className="text-gray-600">•</span>
           <Link href="/contact" className="hover:text-cyan-300 transition-colors">Contact Us</Link>
         </div>
-        <p className="text-[11px] text-gray-500">© 2026 SceneSense Studio. All rights reserved. Powered by TMDB &amp; AI Neural Cinema.</p>
+        <p className="text-[10px] sm:text-[11px] text-gray-500 font-mono">© 2026 SceneSense Studio. All rights reserved. Powered by TMDB &amp; AI Neural Cinema.</p>
       </footer>
     </main>
   );
