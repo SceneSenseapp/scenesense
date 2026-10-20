@@ -18,7 +18,7 @@ export async function POST(request) {
     let currentUsage = 0;
     let userGenRef = null;
 
-    if (userId) {
+    if (userId && db) {
       try {
         const todayStr = new Date().toISOString().split("T")[0];
         userGenRef = doc(db, "user_generations", userId);
@@ -54,8 +54,13 @@ export async function POST(request) {
       process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Missing Gemini API Key");
+      throw new Error("Missing Gemini API Key in server environment variables.");
     }
+
+    const tmdbApiKey = 
+      process.env.TMDB_API_KEY || 
+      process.env.NEXT_PUBLIC_TMDB_API_KEY || 
+      "e2b0c95a0bc07e997f769f3d9b4b0db3";
 
     const ai = new GoogleGenAI({ apiKey });
 
@@ -78,17 +83,13 @@ export async function POST(request) {
 
     const systemInstruction = `
 You are SceneSense Studio's cinematic intelligence engine.
-Your mission is to recommend exactly 25 real, existing ${category === 'tv' ? 'TV series' : 'feature films'} matching the user's emotional wavelength, persona directive, and format.
+Your mission is to recommend exactly 20 real, existing ${category === 'tv' ? 'TV series' : 'feature films'} matching the user's emotional wavelength, persona directive, and format.
 
-TEMPORAL ACCURACY DIRECTIVE (OVERRIDE RULE):
-- If the user explicitly asks for a specific year, era, or timeframe (e.g., "movies from 2025", "1994", "80s horror", "2024 releases"), ALL 25 recommendations MUST be strictly from that requested year or time period. Do not include older or unrelated years.
-- ONLY when the user DOES NOT specify any year or time frame (e.g. general mood like "sad", "space thriller", "laugh out loud comedy"):
-  1. Ensure at least 6 to 8 titles are modern releases from the past 3 to 4 years (2022–2026).
-  2. The remaining titles may explore prior classic decades and foreign gems.
+TEMPORAL ACCURACY DIRECTIVE:
+- If the user specifies a year or era (e.g., "movies from 2025", "1994", "80s horror"), all titles MUST be strictly from that era.
+- Otherwise, include a balance of recent releases (2022-2026) alongside classic titles.
 
-Place the single most compelling, high-quality match at index 0.
-
-You must respond ONLY with valid JSON matching this schema:
+Respond ONLY with raw JSON matching this structure:
 {
   "dialogue": "1-2 sentence persona transmission.",
   "primary_reason": "Specific sentence explaining why the #1 choice fits their precise request.",
@@ -98,15 +99,12 @@ You must respond ONLY with valid JSON matching this schema:
 }
 `;
 
-    const promptText = `
-User Query: "${mood}"
-Persona: "${persona}"
-Directive: "${personaDirective}"
-${antiRepeatPrompt}
-`;
+    const promptText = `User Query: "${mood}"\nPersona: "${persona}"\nDirective: "${personaDirective}"\n${antiRepeatPrompt}`;
+
+    const modelCandidate = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: modelCandidate,
       contents: promptText,
       config: {
         systemInstruction,
@@ -115,16 +113,22 @@ ${antiRepeatPrompt}
       }
     });
 
-    const rawText = response.text || "{}";
-    const match = rawText.match(/\{[\s\S]*\}/);
-    const jsonStr = match ? match[0] : rawText;
-    const aiResult = JSON.parse(jsonStr);
+    let rawText = response.text || "{}";
+    // Strip markdown code fences if returned
+    rawText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+
+    let aiResult;
+    try {
+      aiResult = JSON.parse(rawText);
+    } catch {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      aiResult = match ? JSON.parse(match[0]) : { titles: [] };
+    }
 
     const recommendedList = Array.isArray(aiResult.titles) ? aiResult.titles : [];
-    const tmdbApiKey = process.env.NEXT_PUBLIC_TMDB_API_KEY || process.env.TMDB_API_KEY;
 
-    // Search TMDB in parallel for up to 25 titles
-    const searchPromises = recommendedList.slice(0, 25).map(async (item) => {
+    // Query TMDB in parallel with graceful error containment
+    const searchPromises = recommendedList.slice(0, 20).map(async (item) => {
       try {
         const searchUrl = new URL(`https://api.themoviedb.org/3/search/${category}`);
         searchUrl.searchParams.append('api_key', tmdbApiKey);
@@ -136,6 +140,7 @@ ${antiRepeatPrompt}
         }
 
         const res = await fetch(searchUrl.toString());
+        if (!res.ok) return null;
         const data = await res.json();
         
         if (data.results && data.results.length > 0) {
@@ -167,7 +172,7 @@ ${antiRepeatPrompt}
     });
 
     if (finalMovies.length === 0) {
-      throw new Error("No TMDB matches found for AI recommendations");
+      throw new Error("No TMDB records could be matched with the AI output.");
     }
 
     if (userGenRef) {
@@ -192,9 +197,10 @@ ${antiRepeatPrompt}
     });
 
   } catch (error) {
-    console.error("[SCENESENSE API CRITICAL ERROR]:", error);
+    console.error("[SCENESENSE API CRITICAL ERROR]:", error.message);
     return NextResponse.json({
-      success: true,
+      success: false,
+      error: error.message,
       data: {
         movies: [{
           id: 603,
