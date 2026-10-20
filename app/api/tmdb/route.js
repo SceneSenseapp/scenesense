@@ -3,8 +3,25 @@ import { NextResponse } from 'next/server';
 export async function GET(request) {
   // Extract parameters from the local request
   const { searchParams } = new URL(request.url);
-  const page = searchParams.get('page') || 1;
-  const endpoint = searchParams.get('endpoint') || 'trending/movie/day';
+  const requestedPage = searchParams.get('page');
+  const requestedEndpoint = searchParams.get('endpoint') || 'trending/movie/day';
+
+  // Restrict endpoint to a server-controlled allowlist
+  const allowedEndpoints = new Set([
+    'trending/movie/day',
+    'trending/tv/day',
+    'movie/popular',
+    'movie/top_rated',
+    'tv/popular',
+    'tv/top_rated',
+  ]);
+  const endpoint = allowedEndpoints.has(requestedEndpoint)
+    ? requestedEndpoint
+    : 'trending/movie/day';
+
+  // Sanitize page to a positive integer
+  const parsedPage = Number.parseInt(requestedPage ?? '1', 10);
+  const page = Number.isInteger(parsedPage) && parsedPage > 0 ? String(parsedPage) : '1';
   
   // Safely access the server-side environment variable
   const TMDB_API_KEY = process.env.TMDB_API_KEY;
@@ -15,7 +32,11 @@ export async function GET(request) {
 
   try {
     // Construct the secure request to TMDB
-    const res = await fetch(`https://api.themoviedb.org/3/${endpoint}?api_key=${TMDB_API_KEY}&page=${page}`);
+    const tmdbUrl = new URL(`https://api.themoviedb.org/3/${endpoint}`);
+    tmdbUrl.searchParams.set('api_key', TMDB_API_KEY);
+    tmdbUrl.searchParams.set('page', page);
+
+    const res = await fetch(tmdbUrl.toString());
     const data = await res.json();
     
     return NextResponse.json(data);
