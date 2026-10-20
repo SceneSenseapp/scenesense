@@ -26,12 +26,12 @@
     ]
   },
   "include": [
-    "next-env.d.ts",
+    "next-env.d.js",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-, "app/api/movie/[id]/route.js", "app/api/actor/[id]/route.js", "components/MovieCard.jsx", "hooks/useWatchlist.js"  ],
+, "app/api/movie/[id]/route.js", "app/api/actor/[id]/route.js", "components/MovieCard.jsx", "hooks/useWatchlist.js", "--template/next.config.js", "prisma.config.js", "playwright.config.js", "--template/next-env.d.js", ".next/types/cache-life.d.js"  ],
   "exclude": ["node_modules"]
 }

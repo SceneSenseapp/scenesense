@@ -1,8 +1,5 @@
-// next.config.ts
-import type { NextConfig } from 'next';
-
-const nextConfig: NextConfig = {
-  output: 'standalone', // Optimized container & Node production builds
+const nextConfig = {
+  output: 'standalone',
   images: {
     qualities: [75, 100],
     remotePatterns: [
