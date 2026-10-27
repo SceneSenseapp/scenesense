@@ -1,7 +1,7 @@
 // File: app/reviews/page.jsx
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { 
   collection, 
   query, 
@@ -11,11 +11,13 @@ import {
   deleteDoc, 
   updateDoc, 
   doc, 
+  increment,
   serverTimestamp, 
   getDocs, 
   getDoc 
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
+import Image from 'next/image';
 import { auth, db } from '@/firebase';
 
 // TMDB Standard Genre Map
@@ -40,6 +42,10 @@ const VERDICT_TAGS = [
 ];
 
 const RATING_STEPS = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+
+const subscribeToNothing = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 // Realistic human profile names
 const REAL_PERSON_PROFILES = [
@@ -143,7 +149,12 @@ const formatPosterUrl = (path, size = 'w500') => {
 };
 
 export default function GlobalReviewsPage() {
-  const [isMounted, setIsMounted] = useState(false);
+  const isMounted = useSyncExternalStore(
+    subscribeToNothing,
+    getClientSnapshot,
+    getServerSnapshot
+  );
+
   const [user, setUser] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -155,7 +166,7 @@ export default function GlobalReviewsPage() {
     label: 'all-dispatches' 
   });
 
-  const [inspectingFilm, setInspectingFilm] = useState(null);
+  const [inspectingFilmKey, setInspectingFilmKey] = useState(null);
   const [watchlistItems, setWatchlistItems] = useState([]);
   const [showWatchlistPicker, setShowWatchlistPicker] = useState(false);
 
@@ -176,13 +187,9 @@ export default function GlobalReviewsPage() {
   const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
   const searchTimeoutRef = useRef(null);
 
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
   // Lock background scroll when any review modal is active
   useEffect(() => {
-    if (inspectingFilm || showDeployModal) {
+    if (inspectingFilmKey || showDeployModal) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
@@ -190,7 +197,7 @@ export default function GlobalReviewsPage() {
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [inspectingFilm, showDeployModal]);
+  }, [inspectingFilmKey, showDeployModal]);
 
   useEffect(() => {
     if (!isMounted || typeof window === 'undefined' || !auth) return;
@@ -228,7 +235,7 @@ export default function GlobalReviewsPage() {
   useEffect(() => {
     if (!isMounted || typeof window === 'undefined' || !db) return;
 
-    const q = query(collection(db, 'reviews'), limit(3000));
+    const q = query(collection(db, 'reviews'), limit(500));
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -238,40 +245,19 @@ export default function GlobalReviewsPage() {
         }));
 
         data.sort((a, b) => {
-          const timeA = a.createdAt?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : Date.now() / 1000);
-          const timeB = b.createdAt?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : Date.now() / 1000);
-          return timeB - timeA;
+          const parseTime = (timestamp) => {
+            if (!timestamp) return Date.now();
+            if (typeof timestamp.toMillis === 'function') return timestamp.toMillis();
+            if (timestamp.seconds) return timestamp.seconds * 1000;
+            const parsed = new Date(timestamp).getTime();
+            return isNaN(parsed) ? Date.now() : parsed;
+          };
+
+          return parseTime(b.createdAt) - parseTime(a.createdAt);
         });
 
         setReviews(data);
         setLoading(false);
-
-        data.forEach(async (rev) => {
-          if ((!rev.posterPath && !rev.poster) && rev.movieTitle) {
-            try {
-              const tmdbKey = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
-              const res = await fetch(
-                `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(rev.movieTitle)}&include_adult=false&language=en-US&page=1`
-              );
-              if (res.ok) {
-                const json = await res.json();
-                const match = json.results?.[0];
-                if (match && match.poster_path) {
-                  const posterUrl = `https://image.tmdb.org/t/p/w500${match.poster_path}`;
-                  const year = match.release_date ? Number(match.release_date.split('-')[0]) : (rev.releaseYear || 1994);
-                  await updateDoc(doc(db, 'reviews', rev.id), {
-                    posterPath: posterUrl,
-                    releaseYear: year,
-                    movieId: match.id,
-                    tmdbId: match.id
-                  });
-                }
-              }
-            } catch (healErr) {
-              console.warn("Auto-heal poster failed:", healErr);
-            }
-          }
-        });
       },
       (error) => {
         console.warn("Reviews telemetry sync notice:", error);
@@ -354,12 +340,17 @@ export default function GlobalReviewsPage() {
         rev.id
       );
 
+      const revTimestamp = rev.createdAt?.seconds 
+        ? rev.createdAt.seconds 
+        : (rev.createdAt ? new Date(rev.createdAt).getTime() / 1000 : 0);
+
       const enhancedRev = {
         ...rev,
         displayAuthor,
         displayHandle,
         isLegacyBot,
-        enhancedText
+        enhancedText,
+        resolvedTime: revTimestamp
       };
 
       if (!map.has(filmKey)) {
@@ -374,7 +365,7 @@ export default function GlobalReviewsPage() {
           mediaType: getMediaType(rev),
           posterPath: rev.posterPath || rev.poster || '',
           reviewsList: [enhancedRev],
-          latestTime: rev.createdAt?.seconds || 0
+          latestTime: revTimestamp
         });
       } else {
         const existing = map.get(filmKey);
@@ -386,9 +377,8 @@ export default function GlobalReviewsPage() {
         if (existing.releaseYear === 'N/A' && rev.releaseYear) {
           existing.releaseYear = rev.releaseYear;
         }
-        const revTime = rev.createdAt?.seconds || 0;
-        if (revTime > existing.latestTime) {
-          existing.latestTime = revTime;
+        if (revTimestamp > existing.latestTime) {
+          existing.latestTime = revTimestamp;
         }
       }
     });
@@ -398,6 +388,8 @@ export default function GlobalReviewsPage() {
       const sum = film.reviewsList.reduce((acc, r) => acc + getNormalizedRating(r.rating), 0);
       const avg = count > 0 ? sum / count : 0;
       const hasConsensus = count >= 7;
+
+      film.reviewsList.sort((a, b) => b.resolvedTime - a.resolvedTime);
 
       return {
         ...film,
@@ -471,9 +463,9 @@ export default function GlobalReviewsPage() {
   }, [groupedFilms, searchQuery, serverChannel]);
 
   const activeInspectingFilm = useMemo(() => {
-    if (!inspectingFilm) return null;
-    return groupedFilms.find(f => f.filmKey === inspectingFilm.filmKey) || inspectingFilm;
-  }, [groupedFilms, inspectingFilm]);
+    if (!inspectingFilmKey) return null;
+    return groupedFilms.find(f => f.filmKey === inspectingFilmKey) || null;
+  }, [groupedFilms, inspectingFilmKey]);
 
   const handleDeleteReview = async (review) => {
     if (!user || (!review.isLegacyBot && user.uid !== review.userId)) {
@@ -484,8 +476,18 @@ export default function GlobalReviewsPage() {
     if (!confirm("Are you sure you want to delete this review?")) return;
     try {
       await deleteDoc(doc(db, 'reviews', review.id));
+      
+      // Decrement user review counters
+      if (db && user && !review.isLegacyBot) {
+        const isClassic = Number(review.releaseYear) < 1980;
+        await updateDoc(doc(db, 'users', user.uid), {
+          reviewCount: increment(-1),
+          ...(isClassic ? { classicCount: increment(-1) } : {})
+        });
+      }
+
       if (activeInspectingFilm && activeInspectingFilm.reviewsList.length <= 1) {
-        setInspectingFilm(null);
+        setInspectingFilmKey(null);
       }
     } catch (err) {
       console.error("Delete review error:", err);
@@ -510,14 +512,16 @@ export default function GlobalReviewsPage() {
       .filter((f) => f.movieTitle.toLowerCase().includes(lowerTerm))
       .slice(0, 6)
       .map((f) => ({
-        id: f.movieId || f.filmKey,
+        id: f.tmdbId || f.movieId || f.filmKey,
+        tmdbId: f.tmdbId || f.movieId,
         title: f.movieTitle,
         name: f.movieTitle,
         release_date: String(f.releaseYear || ''),
         first_air_date: String(f.releaseYear || ''),
         poster_path: f.posterPath,
         genre_ids: [],
-        genre: f.genre
+        genre: f.genre,
+        mediaType: f.mediaType
       }));
 
     if (instantLocalMatches.length > 0) {
@@ -634,16 +638,20 @@ export default function GlobalReviewsPage() {
     setIsSubmitting(true);
 
     try {
+      const finalTitle = String(deployMovieTitle).trim();
       const finalPoster = deployPoster?.trim() || null;
       const finalYear = Number(deployYear) || new Date().getFullYear();
       const finalGenre = deployGenre?.trim() || 'Action';
-      const finalId = selectedMovieTarget?.id ? Number(selectedMovieTarget.id) : (selectedMovieTarget?.tmdbId ? Number(selectedMovieTarget.tmdbId) : Date.now());
+      
+      const tmdbIdNum = selectedMovieTarget?.tmdbId || selectedMovieTarget?.id;
+      const numericTmdbId = tmdbIdNum && !isNaN(Number(tmdbIdNum)) ? Number(tmdbIdNum) : null;
+      const targetFilmKey = numericTmdbId ? `tmdb-${numericTmdbId}` : `title-${finalTitle.toLowerCase()}`;
 
       const newReviewPayload = {
-        movieId: finalId,
-        tmdbId: selectedMovieTarget?.id ? Number(selectedMovieTarget.id) : null,
+        movieId: numericTmdbId || Date.now(),
+        tmdbId: numericTmdbId,
         mediaType: String(deployMediaType || 'movie'),
-        movieTitle: String(deployMovieTitle).trim(),
+        movieTitle: finalTitle,
         releaseYear: Number(finalYear),
         genre: String(finalGenre),
         genres: [String(finalGenre)],
@@ -658,8 +666,20 @@ export default function GlobalReviewsPage() {
         createdAt: serverTimestamp()
       };
 
-      const docRef = await addDoc(collection(db, 'reviews'), newReviewPayload);
+      await addDoc(collection(db, 'reviews'), newReviewPayload);
 
+      // Increment review count and classic metrics directly in user profile
+      if (db && currentAuthUser.uid) {
+        const isClassic = finalYear < 1980;
+        await updateDoc(doc(db, 'users', currentAuthUser.uid), {
+          reviewCount: increment(1),
+          xp: increment(50),
+          coins: increment(10),
+          ...(isClassic ? { classicCount: increment(1) } : {})
+        });
+      }
+
+      // Clean up modal state and navigate to root sector
       setDeployMovieTitle('');
       setSelectedMovieTarget(null);
       setDeployComment('');
@@ -667,8 +687,12 @@ export default function GlobalReviewsPage() {
       setDeployOverview('');
       setContainsSpoilers(false);
       setShowDeployModal(false);
-      
-      alert(`Dispatch Saved! ID: ${docRef.id}`);
+      setSearchQuery('');
+      setServerChannel({ type: 'root', value: 'all', label: 'all-dispatches' });
+
+      // Open the dossier for the film reviewed
+      setInspectingFilmKey(targetFilmKey);
+
     } catch (err) {
       console.error("Firestore write failure:", err);
       alert(`Firestore Write Rejection: [${err.code || 'ERROR'}] ${err.message}`);
@@ -697,7 +721,7 @@ export default function GlobalReviewsPage() {
               ⚡
             </div>
             <div>
-              <h2 className="text-xs font-black uppercase tracking-wider text-white">Critique Archives</h2>
+              <h2 className="text-xs font-black uppercase tracking-wider text-white font-mono">Critique Archives</h2>
               <span className="text-[9px] font-mono text-cyan-400">DATABASE NODE // 01</span>
             </div>
           </div>
@@ -908,14 +932,17 @@ export default function GlobalReviewsPage() {
                 return (
                   <div
                     key={`film-${film.filmKey}-${idx}`}
-                    onClick={() => setInspectingFilm(film)}
+                    onClick={() => setInspectingFilmKey(film.filmKey)}
                     className="group relative flex flex-col bg-[#080d1a] hover:bg-[#0c1426] border border-cyan-500/20 hover:border-cyan-400/80 rounded-xl overflow-hidden transition-all duration-200 cursor-pointer shadow-md hover:-translate-y-1"
                   >
                     <div className="relative aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
                       {posterSrc ? (
-                        <img
+                        <Image
                           src={posterSrc}
                           alt={film.movieTitle || 'Poster'}
+                          fill
+                          sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
+                          unoptimized
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                       ) : (
@@ -958,7 +985,7 @@ export default function GlobalReviewsPage() {
 
                     <div className="p-2.5 flex flex-col justify-between flex-1">
                       <h3 
-                        className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors uppercase tracking-tight truncate"
+                        className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors uppercase tracking-tight truncate font-mono"
                         title={film.movieTitle}
                       >
                         {film.movieTitle || 'Untitled Film'}
@@ -980,7 +1007,7 @@ export default function GlobalReviewsPage() {
 
       {/* DEDICATED FILM REVIEW DOSSIER MODAL */}
       {activeInspectingFilm && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 font-sans">
           <div className="bg-[#080d1a] border border-cyan-500/40 rounded-3xl w-full max-w-3xl shadow-[0_0_50px_rgba(6,182,212,0.2)] relative flex flex-col max-h-[90vh] overflow-hidden animate-zoom-in">
             
             <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#0b1122]/70 shrink-0">
@@ -990,13 +1017,13 @@ export default function GlobalReviewsPage() {
                   <span className="text-[9px] font-mono uppercase tracking-widest text-cyan-400 font-bold block">
                     CRITIQUE ARCHIVES // DOSSIER
                   </span>
-                  <h2 className="text-base font-bold text-white uppercase tracking-tight">
+                  <h2 className="text-base font-bold text-white uppercase tracking-tight font-mono">
                     {activeInspectingFilm.movieTitle} ({activeInspectingFilm.releaseYear || 'N/A'})
                   </h2>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 font-mono">
                 <button
                   type="button"
                   onClick={() => {
@@ -1006,17 +1033,17 @@ export default function GlobalReviewsPage() {
                     setDeployPoster(formatPosterUrl(target.posterPath, 'w500'));
                     setDeployMediaType(target.mediaType || 'movie');
                     setDeployGenre(target.genre || 'Action');
-                    setInspectingFilm(null);
+                    setInspectingFilmKey(null);
                     setShowDeployModal(true);
                   }}
-                  className="px-3 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-xs font-mono font-bold rounded-xl transition-all cursor-pointer"
+                  className="px-3 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
                 >
                   + Add Your Review
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => setInspectingFilm(null)} 
-                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-lg font-mono"
+                  onClick={() => setInspectingFilmKey(null)} 
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-lg"
                 >
                   ✕
                 </button>
@@ -1028,9 +1055,12 @@ export default function GlobalReviewsPage() {
               <div className="p-4 bg-[#050811] border border-cyan-500/25 rounded-2xl flex gap-4 items-center">
                 {activeInspectingFilm.posterPath ? (
                   <div className="relative w-16 aspect-[2/3] rounded-xl overflow-hidden shrink-0 border border-cyan-500/30 bg-zinc-900">
-                    <img
+                    <Image
                       src={formatPosterUrl(activeInspectingFilm.posterPath, 'w300')}
                       alt={activeInspectingFilm.movieTitle}
+                      fill
+                      sizes="64px"
+                      unoptimized
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -1040,17 +1070,17 @@ export default function GlobalReviewsPage() {
                   </div>
                 )}
 
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 font-mono">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[10px] font-mono uppercase bg-cyan-950 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded">
+                    <span className="text-[10px] uppercase bg-cyan-950 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded">
                       {activeInspectingFilm.mediaType === 'tv' ? 'Television Series' : 'Feature Film'}
                     </span>
-                    <span className="text-[10px] font-mono text-slate-400">
+                    <span className="text-[10px] text-slate-400">
                       Genre: {activeInspectingFilm.genre || 'Cinema'}
                     </span>
                   </div>
                   <h3 className="text-base font-bold text-white uppercase">{activeInspectingFilm.movieTitle}</h3>
-                  <div className="flex items-center gap-3 mt-1 text-xs font-mono">
+                  <div className="flex items-center gap-3 mt-1 text-xs">
                     <span className="text-slate-400">
                       Total Dispatches: <strong className="text-cyan-400">{activeInspectingFilm.reviewCount}</strong>
                     </span>
@@ -1069,14 +1099,14 @@ export default function GlobalReviewsPage() {
                 </div>
               </div>
 
-              {/* ALL REVIEWS FOR THIS FILM: Real names, handles, and avatars */}
-              <div className="flex flex-col gap-3">
-                <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">
+              {/* ALL REVIEWS FOR THIS FILM */}
+              <div className="flex flex-col gap-3 font-mono">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                   COMMUNITY CRITIQUES &amp; DISPATCHES ({activeInspectingFilm.reviewsList.length})
                 </span>
 
                 {activeInspectingFilm.reviewsList.length === 0 ? (
-                  <p className="text-xs text-slate-500 font-mono py-4 text-center">
+                  <p className="text-xs text-slate-500 py-4 text-center">
                     No critiques written for this title yet. Be the first to add one!
                   </p>
                 ) : (
@@ -1089,7 +1119,7 @@ export default function GlobalReviewsPage() {
                         <div className="flex items-center gap-2.5">
                           {rev.userPhoto ? (
                             <div className="relative w-7 h-7 rounded-full overflow-hidden border border-cyan-500/30 shrink-0">
-                              <img src={rev.userPhoto} alt={rev.displayAuthor || 'User'} className="w-full h-full object-cover animate-fade-in" />
+                              <Image src={rev.userPhoto} alt={rev.displayAuthor || 'User'} fill sizes="28px" className="object-cover" />
                             </div>
                           ) : (
                             <div className="w-7 h-7 rounded-full bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-[10px] text-cyan-300 font-bold uppercase shrink-0">
@@ -1099,18 +1129,18 @@ export default function GlobalReviewsPage() {
                           <div className="flex flex-col">
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold text-white leading-none">{rev.displayAuthor}</span>
-                              <span className="text-[10px] font-mono text-cyan-400/80 leading-none">{rev.displayHandle}</span>
+                              <span className="text-[10px] text-cyan-400/80 leading-none">{rev.displayHandle}</span>
                             </div>
-                            <span className="text-[9px] font-mono text-slate-500 mt-0.5">
+                            <span className="text-[9px] text-slate-500 mt-0.5">
                               {rev.createdAt?.seconds
                                 ? new Date(rev.createdAt.seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-                                : 'Verified Community Log'}
+                                : 'Just now'}
                             </span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1 bg-amber-950/40 border border-amber-500/40 px-2 py-0.5 rounded text-amber-300 text-xs font-mono font-bold">
+                          <div className="flex items-center gap-1 bg-amber-950/40 border border-amber-500/40 px-2 py-0.5 rounded text-amber-300 text-xs font-bold">
                             <span>★</span>
                             <span>{getNormalizedRating(rev.rating).toFixed(1)} / 5.0</span>
                           </div>
@@ -1119,7 +1149,7 @@ export default function GlobalReviewsPage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteReview(rev)}
-                              className="text-[10px] font-mono text-rose-400 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/40 px-2 py-0.5 rounded transition-all cursor-pointer font-bold flex items-center gap-1"
+                              className="text-[10px] text-rose-400 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/40 px-2 py-0.5 rounded transition-all cursor-pointer font-bold flex items-center gap-1"
                               title="Delete this review"
                             >
                               <span>🗑️</span>
@@ -1129,12 +1159,12 @@ export default function GlobalReviewsPage() {
                         </div>
                       </div>
 
-                      <p className="text-xs text-slate-300 leading-relaxed font-light">
+                      <p className="text-xs text-slate-300 leading-relaxed font-light font-sans">
                         &quot;{rev.enhancedText}&quot;
                       </p>
 
                       {rev.containsSpoilers && (
-                        <span className="text-[9px] font-mono text-rose-400 bg-rose-950/40 border border-rose-500/30 px-2 py-0.5 rounded w-fit">
+                        <span className="text-[9px] text-rose-400 bg-rose-950/40 border border-rose-500/30 px-2 py-0.5 rounded w-fit">
                           ⚠️ Contains Major Plot Spoilers
                         </span>
                       )}
@@ -1150,16 +1180,16 @@ export default function GlobalReviewsPage() {
 
       {/* EXPANDED REVIEW STUDIO MODAL */}
       {showDeployModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-fade-in font-sans">
           <div className="bg-[#080d1a] border border-cyan-500/40 rounded-3xl w-full max-w-4xl shadow-[0_0_50px_rgba(6,182,212,0.15)] relative flex flex-col max-h-[92vh] animate-zoom-in">
             
-            <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#0b1122]/70 shrink-0 rounded-t-3xl">
+            <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#0b1122]/70 shrink-0 rounded-t-3xl font-mono">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-xl bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-cyan-400 text-sm">
                   ✍️
                 </div>
                 <div>
-                  <span className="text-[9px] font-mono uppercase tracking-widest text-cyan-400 font-bold block">
+                  <span className="text-[9px] uppercase tracking-widest text-cyan-400 font-bold block">
                     CRITIQUE TERMINAL // DISPATCH
                   </span>
                   <h2 className="text-sm font-bold text-white uppercase tracking-wider">
@@ -1170,7 +1200,7 @@ export default function GlobalReviewsPage() {
               <button 
                 type="button" 
                 onClick={() => setShowDeployModal(false)} 
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-lg font-mono"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-lg"
               >
                 ✕
               </button>
@@ -1236,16 +1266,18 @@ export default function GlobalReviewsPage() {
                           >
                             <div className="relative aspect-[2/3] w-full rounded-lg bg-zinc-800 overflow-hidden mb-1.5">
                               {poster ? (
-                                <img
+                                <Image
                                   src={poster}
                                   alt={title || 'Watchlist title'}
+                                  fill
+                                  sizes="96px"
                                   className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                                 />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-xs">🎬</div>
                               )}
                             </div>
-                            <span className="text-[11px] font-bold text-white truncate block">
+                            <span className="text-[11px] font-bold text-white truncate block font-mono">
                               {title}
                             </span>
                           </div>
@@ -1257,12 +1289,12 @@ export default function GlobalReviewsPage() {
               )}
 
               <div className="relative z-50 shrink-0">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-slate-300 font-mono">
+                <div className="flex items-center justify-between mb-1.5 font-mono">
+                  <label className="text-xs font-bold text-slate-300">
                     SEARCH &amp; TARGET TITLE
                   </label>
                   {isSearchingTmdb && (
-                    <span className="text-[10px] font-mono text-cyan-400 animate-pulse flex items-center gap-1">
+                    <span className="text-[10px] text-cyan-400 animate-pulse flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping inline-block" />
                       Searching...
                     </span>
@@ -1277,12 +1309,12 @@ export default function GlobalReviewsPage() {
                     value={deployMovieTitle}
                     onChange={(e) => handleTitleInputChange(e.target.value)}
                     placeholder={`Type ${deployMediaType === 'movie' ? 'movie' : 'TV series'} title (e.g. Argo, Inception)...`}
-                    className="w-full bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl pl-10 pr-4 py-3 text-xs text-white outline-none font-medium shadow-inner transition-colors"
+                    className="w-full bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl pl-10 pr-4 py-3 text-xs text-white outline-none font-medium shadow-inner transition-colors font-mono"
                   />
                 </div>
 
                 {suggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-2 bg-[#070b14] border-2 border-cyan-500/70 rounded-2xl shadow-[0_15px_50px_rgba(0,0,0,0.95)] z-[200] max-h-64 overflow-y-auto divide-y divide-white/5 backdrop-blur-2xl animate-fade-in">
+                  <div className="absolute left-0 right-0 top-full mt-2 bg-[#070b14] border-2 border-cyan-500/70 rounded-2xl shadow-[0_15px_50px_rgba(0,0,0,0.95)] z-[200] max-h-64 overflow-y-auto divide-y divide-white/5 backdrop-blur-2xl animate-fade-in font-mono">
                     {suggestions.map((m, idx) => {
                       const year = (m.release_date || m.first_air_date || '').split('-')[0] || 'N/A';
                       const genre = m.genre_ids?.[0] ? TMDB_GENRES[m.genre_ids[0]] : (m.genre || 'Cinema');
@@ -1298,10 +1330,12 @@ export default function GlobalReviewsPage() {
                           <div className="flex items-center gap-3.5 min-w-0">
                             {poster ? (
                               <div className="relative w-9 h-14 rounded-lg overflow-hidden shrink-0 border border-cyan-500/40 bg-zinc-900">
-                                <img 
-                                  src={poster} 
-                                  alt={m.title || m.name || "poster"} 
-                                  className="w-full h-full object-cover animate-fade-in" 
+                                <Image
+                                  src={poster}
+                                  alt={m.title || m.name || "poster"}
+                                  fill
+                                  sizes="36px"
+                                  className="object-cover"
                                 />
                               </div>
                             ) : (
@@ -1314,7 +1348,7 @@ export default function GlobalReviewsPage() {
                               <p className="text-xs font-bold text-white group-hover:text-cyan-300 truncate">
                                 {m.title || m.name}
                               </p>
-                              <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                              <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
                                 <span>{year}</span>
                                 <span>•</span>
                                 <span className="text-cyan-400">{genre}</span>
@@ -1322,7 +1356,7 @@ export default function GlobalReviewsPage() {
                             </div>
                           </div>
 
-                          <span className="text-[10px] font-mono font-bold text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <span className="text-[10px] font-bold text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                             Select Title ↵
                           </span>
                         </div>
@@ -1334,24 +1368,26 @@ export default function GlobalReviewsPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-2">
                 
-                <div className="md:col-span-5 bg-[#050811] border border-cyan-500/30 rounded-2xl p-4 flex flex-col justify-between">
+                <div className="md:col-span-5 bg-[#050811] border border-cyan-500/30 rounded-2xl p-4 flex flex-col justify-between font-mono">
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono text-cyan-400 uppercase tracking-widest font-bold">
+                      <span className="text-[9px] text-cyan-400 uppercase tracking-widest font-bold">
                         FILM PREVIEW
                       </span>
-                      <span className="text-[9px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded uppercase">
+                      <span className="text-[9px] text-slate-400 bg-white/5 px-2 py-0.5 rounded uppercase">
                         {deployMediaType}
                       </span>
                     </div>
 
-                    <div className="flex gap-3 animate-fade-in">
+                    <div className="flex gap-3">
                       {deployPoster ? (
                         <div className="relative w-20 aspect-[2/3] rounded-xl overflow-hidden shrink-0 border border-cyan-500/30 shadow-md bg-zinc-900">
-                          <img 
+                          <Image 
                             src={deployPoster} 
                             alt={deployMovieTitle || "Poster"} 
-                            className="w-full h-full object-cover animate-fade-in"
+                            fill
+                            sizes="80px"
+                            className="w-full h-full object-cover"
                           />
                         </div>
                       ) : (
@@ -1365,15 +1401,15 @@ export default function GlobalReviewsPage() {
                           <h4 className="text-xs font-bold text-white truncate">
                             {deployMovieTitle || 'Enter Film Title Above'}
                           </h4>
-                          <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                          <span className="text-[10px] text-slate-400 block mt-0.5">
                             {deployYear ? `Year: ${deployYear}` : 'Year Pending'}
                           </span>
-                          <span className="text-[10px] font-mono text-cyan-400 block">
+                          <span className="text-[10px] text-cyan-400 block">
                             Genre: {deployGenre}
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-1.5 bg-amber-950/40 border border-amber-500/40 px-2.5 py-1 rounded-lg text-amber-300 text-xs font-bold font-mono w-fit">
+                        <div className="flex items-center gap-1.5 bg-amber-950/40 border border-amber-500/40 px-2.5 py-1 rounded-lg text-amber-300 text-xs font-bold w-fit">
                           <span>★</span>
                           <span>{deployRating.toFixed(1)} / 5.0</span>
                         </div>
@@ -1381,13 +1417,13 @@ export default function GlobalReviewsPage() {
                     </div>
 
                     {deployOverview && (
-                      <p className="text-[11px] text-slate-400 line-clamp-3 italic bg-black/40 p-2.5 rounded-xl border border-white/5 animate-fade-in">
+                      <p className="text-[11px] text-slate-400 line-clamp-3 italic bg-black/40 p-2.5 rounded-xl border border-white/5 font-sans">
                         &quot;{deployOverview}&quot;
                       </p>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-cyan-500/20 font-mono text-[10px]">
+                  <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-cyan-500/20 text-[10px]">
                     <div className="bg-[#080d1a] p-2 rounded-xl border border-cyan-500/10">
                       <span className="text-slate-500 block uppercase">Release Year</span>
                       <span className="text-white font-bold">{deployYear}</span>
@@ -1399,19 +1435,19 @@ export default function GlobalReviewsPage() {
                   </div>
                 </div>
 
-                <div className="md:col-span-7 flex flex-col gap-4">
+                <div className="md:col-span-7 flex flex-col gap-4 font-mono">
                   
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-bold text-slate-300 font-mono">
+                      <label className="text-xs font-bold text-slate-300">
                         RATING: {deployRating.toFixed(1)} / 5.0
                       </label>
-                      <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded">
+                      <span className="text-[10px] font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded">
                         {getRatingSentiment(deployRating)}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-9 gap-1 animate-fade-in">
+                    <div className="grid grid-cols-9 gap-1">
                       {RATING_STEPS.map((step) => {
                         const isSelected = deployRating === step;
                         return (
@@ -1419,7 +1455,7 @@ export default function GlobalReviewsPage() {
                             key={step}
                             type="button"
                             onClick={() => setDeployRating(step)}
-                            className={`py-2 text-[10px] font-mono font-bold rounded-lg border transition-all cursor-pointer text-center ${
+                            className={`py-2 text-[10px] font-bold rounded-lg border transition-all cursor-pointer text-center ${
                               isSelected
                                 ? 'bg-amber-950/60 border-amber-400 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.25)] scale-105 z-10'
                                 : 'bg-[#050811] border-cyan-500/20 text-slate-400 hover:text-white hover:border-cyan-400/50'
@@ -1433,7 +1469,7 @@ export default function GlobalReviewsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 font-mono mb-1.5">
+                    <label className="block text-xs font-bold text-slate-300 mb-1.5">
                       QUICK TAGS (CLICK TO ADD)
                     </label>
                     <div className="flex flex-wrap gap-1.5">
@@ -1442,7 +1478,7 @@ export default function GlobalReviewsPage() {
                           key={tag}
                           type="button"
                           onClick={() => handleAppendTag(tag)}
-                          className="px-2.5 py-1 bg-[#050811] hover:bg-cyan-500/15 border border-cyan-500/20 hover:border-cyan-400 text-slate-300 hover:text-cyan-200 text-[10px] font-mono rounded-lg transition-colors cursor-pointer"
+                          className="px-2.5 py-1 bg-[#050811] hover:bg-cyan-500/15 border border-cyan-500/20 hover:border-cyan-400 text-slate-300 hover:text-cyan-200 text-[10px] rounded-lg transition-colors cursor-pointer"
                         >
                           +{tag}
                         </button>
@@ -1452,10 +1488,10 @@ export default function GlobalReviewsPage() {
 
                   <div className="flex-1 flex flex-col">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-slate-300 font-mono">
+                      <label className="text-xs font-bold text-slate-300">
                         REVIEW DETAILS
                       </label>
-                      <span className="text-[10px] font-mono text-slate-500">
+                      <span className="text-[10px] text-slate-500">
                         {deployComment.length} chars
                       </span>
                     </div>
@@ -1465,11 +1501,11 @@ export default function GlobalReviewsPage() {
                       value={deployComment}
                       onChange={(e) => setDeployComment(e.target.value)}
                       placeholder="Write your review: pacing, cinematography, acting, direction..."
-                      className="w-full bg-[#050811] border border-cyan-500/20 focus:border-cyan-400 rounded-xl p-3 text-xs text-white outline-none resize-none font-light italic leading-relaxed flex-1 shadow-inner"
+                      className="w-full bg-[#050811] border border-cyan-500/20 focus:border-cyan-400 rounded-xl p-3 text-xs text-white outline-none resize-none font-light italic leading-relaxed flex-1 shadow-inner font-sans"
                     />
                   </div>
 
-                  <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300 font-mono">
+                  <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
                     <input
                       type="checkbox"
                       checked={containsSpoilers}
@@ -1482,20 +1518,20 @@ export default function GlobalReviewsPage() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-3 border-t border-cyan-500/20 shrink-0">
+              <div className="flex gap-3 pt-3 border-t border-cyan-500/20 shrink-0 font-mono">
                 <button
                   type="button"
                   onClick={() => setShowDeployModal(false)}
-                  className="flex-1 py-3 bg-[#050811] hover:bg-white/5 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer border border-cyan-500/20 font-mono"
+                  className="flex-1 py-3 bg-[#050811] hover:bg-white/5 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer border border-cyan-500/20"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !deployMovieTitle.trim()}
-                  className="flex-2 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.3)] font-mono uppercase tracking-wider"
+                  className="flex-2 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.3)] uppercase tracking-wider"
                 >
-                  {isSubmitting ? 'Saving Review...' : 'Save Review'}
+                  {isSubmitting ? 'Saving Review...' : 'Save Review (+50 XP, +10 🪙)'}
                 </button>
               </div>
             </form>

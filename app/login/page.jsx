@@ -3,12 +3,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile,
   signInWithPopup,
-  GoogleAuthProvider
+  GoogleAuthProvider,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
@@ -20,11 +22,15 @@ export default function LoginPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [isBetaSuccess, setIsBetaSuccess] = useState(false); // NEW: Beta acknowledgment state
+  const [infoMessage, setInfoMessage] = useState('');
+  const [isBetaSuccess, setIsBetaSuccess] = useState(false);
 
+  // Complete User Profile Provisioner
   const syncUserToFirestore = async (user, customName) => {
+    if (!db) return;
     try {
       const userRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userRef);
@@ -33,9 +39,18 @@ export default function LoginPage() {
         await setDoc(userRef, {
           uid: user.uid,
           email: user.email,
-          displayName: customName || user.displayName || 'Operative',
-          photoURL: user.photoURL || null,
-          isVip: false,
+          displayName: customName || user.displayName || user.email?.split('@')[0] || 'Operative',
+          photoURL: user.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.uid}`,
+          coins: 385,
+          xp: 150,
+          reviewCount: 0,
+          classicCount: 0,
+          consensusCount: 0,
+          reputationScore: 0,
+          inventory: [],
+          equippedFrame: null,
+          equippedTitle: null,
+          equippedTheme: null,
           createdAt: serverTimestamp(),
           lastLogin: serverTimestamp(),
         });
@@ -50,6 +65,7 @@ export default function LoginPage() {
   const handleManualAuth = async (e) => {
     e.preventDefault();
     setErrorMessage('');
+    setInfoMessage('');
     setLoading(true);
 
     try {
@@ -69,8 +85,6 @@ export default function LoginPage() {
         });
 
         await syncUserToFirestore(userCredential.user, name.trim());
-        
-        // Trigger the professional beta appreciation notice on new registration
         setIsBetaSuccess(true);
         setLoading(false);
         return;
@@ -84,7 +98,7 @@ export default function LoginPage() {
 
       switch (error.code) {
         case 'auth/email-already-in-use':
-          setErrorMessage('This email is already in use. Please try a different email address.');
+          setErrorMessage('This email is already in use. Please sign in or use a different email.');
           break;
         case 'auth/invalid-email':
           setErrorMessage('Invalid email format provided.');
@@ -110,6 +124,7 @@ export default function LoginPage() {
 
   const handleGoogleAuth = async () => {
     setErrorMessage('');
+    setInfoMessage('');
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
@@ -128,36 +143,56 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <main className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-6 bg-black text-white relative selection:bg-emerald-500/40 font-sans">
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none"></div>
+  const handlePasswordReset = async () => {
+    if (!email.trim()) {
+      setErrorMessage('Enter your email address in the field above to receive a reset dispatch.');
+      return;
+    }
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setInfoMessage(`Password reset key dispatched to ${email.trim()}. Check your inbox.`);
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to dispatch password recovery email.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      <div className="relative z-10 w-full max-w-md bg-[#0b1120] border-2 border-white/10 rounded-3xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl space-y-6">
+  return (
+    <main className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-4 sm:p-8 bg-[#050508] text-slate-100 relative font-sans overflow-hidden selection:bg-cyan-500/30">
+      
+      {/* Background Depth Halos */}
+      <div className="absolute top-0 right-1/4 w-[450px] h-[450px] bg-cyan-600/10 rounded-full blur-[160px] pointer-events-none" />
+      <div className="absolute bottom-10 left-10 w-[450px] h-[450px] bg-indigo-600/10 rounded-full blur-[160px] pointer-events-none" />
+
+      <div className="relative z-10 w-full max-w-md bg-[#080d1a] border border-cyan-500/25 rounded-3xl p-6 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.85)] backdrop-blur-2xl space-y-6">
         
         {/* BETA SUCCESS ACKNOWLEDGMENT VIEW */}
         {isBetaSuccess ? (
-          <div className="text-center space-y-5 py-4 animate-fadeIn">
-            <div className="w-16 h-16 mx-auto rounded-full bg-emerald-950/80 border border-emerald-400/60 flex items-center justify-center text-emerald-400 text-2xl shadow-[0_0_25px_rgba(52,211,153,0.4)]">
+          <div className="text-center space-y-5 py-4 animate-fade-in font-mono">
+            <div className="w-16 h-16 mx-auto rounded-3xl bg-cyan-950/80 border border-cyan-400/60 flex items-center justify-center text-cyan-400 text-3xl shadow-[0_0_30px_rgba(6,182,212,0.35)]">
               ✦
             </div>
             <div className="space-y-2">
-              <span className="text-[10px] font-mono tracking-[0.25em] text-emerald-400 font-bold uppercase block">
-                UPLINK SECURED // BETA ACCESS
+              <span className="text-[10px] tracking-[0.25em] text-cyan-400 font-bold uppercase block">
+                UPLINK SECURED // BETA OPERATIVE
               </span>
               <h2 className="text-xl font-black uppercase tracking-tight text-white">
-                Thank You for Your Interest
+                Clearance Granted
               </h2>
-              <p className="text-xs text-gray-300 leading-relaxed font-sans px-2">
-                Thank you for having an interest in SceneSense and using our Beta version. The official launch is on its way.
+              <p className="text-xs text-slate-300 leading-relaxed font-sans px-2">
+                Your operative profile has been initialized with 385 Studio Credits and Level 1 clearance. Welcome to the SceneSense Studio network.
               </p>
             </div>
-            <div className="pt-4">
+            <div className="pt-2">
               <button
                 type="button"
                 onClick={() => router.push('/')}
-                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-emerald-500 to-indigo-600 hover:opacity-90 text-white font-black uppercase tracking-wider rounded-xl transition-all shadow-lg cursor-pointer text-xs"
+                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-mono font-bold uppercase tracking-wider rounded-2xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer text-xs"
               >
-                Return to Main Uplink
+                Access Mainframe →
               </button>
             </div>
           </div>
@@ -165,120 +200,147 @@ export default function LoginPage() {
           <>
             {/* Header */}
             <div className="text-center space-y-2">
-              <div className="w-12 h-12 mx-auto rounded-full bg-emerald-950/80 border border-emerald-400/50 flex items-center justify-center text-emerald-400 text-xl shadow-[0_0_20px_rgba(52,211,153,0.3)]">
+              <div className="w-12 h-12 mx-auto rounded-2xl bg-cyan-950/80 border border-cyan-400/40 flex items-center justify-center text-cyan-400 text-xl shadow-[0_0_20px_rgba(6,182,212,0.3)]">
                 🎬
               </div>
-              <span className="text-[10px] font-mono tracking-[0.2em] text-emerald-300 font-bold uppercase block">
-                SECURE STUDIO UPLINK ACTIVE // V2.6
+              <span className="text-[10px] font-mono tracking-[0.2em] text-cyan-300 font-bold uppercase block">
+                STUDIO UPLINK GATEWAY // V2.6
               </span>
-              <h2 className="text-2xl font-black uppercase tracking-tight text-white">
+              <h2 className="text-2xl font-black uppercase tracking-tight text-white font-mono">
                 {isRegisterMode ? 'REGISTER OPERATIVE' : 'OPERATIVE LOGIN'}
               </h2>
-              <p className="text-xs text-gray-400 leading-relaxed font-medium">
+              <p className="text-xs text-slate-400 leading-relaxed font-medium">
                 {isRegisterMode 
-                  ? 'Create a new encrypted profile to join the SceneSense Beta program.' 
-                  : 'Authenticate to access personalized neural curations and saved files.'}
+                  ? 'Provision an encrypted profile to unlock watchlists, dispatches, and studio commissary rewards.' 
+                  : 'Authenticate to access your synchronized surveillance radar, dossier, and rewards.'}
               </p>
             </div>
 
-            {/* Error Alert Box */}
+            {/* Error and Info Notices */}
             {errorMessage && (
-              <div className="p-3.5 bg-rose-950/50 border border-rose-500/60 rounded-xl text-xs text-rose-200 font-medium text-center animate-fadeIn">
-                <p>{errorMessage}</p>
+              <div className="p-3.5 bg-rose-950/80 border border-rose-500/50 rounded-2xl text-xs font-mono text-rose-200 text-center animate-fade-in shadow-md">
+                {errorMessage}
+              </div>
+            )}
+            {infoMessage && (
+              <div className="p-3.5 bg-cyan-950/80 border border-cyan-500/50 rounded-2xl text-xs font-mono text-cyan-200 text-center animate-fade-in shadow-md">
+                {infoMessage}
               </div>
             )}
 
-            {/* Form */}
-            <form onSubmit={handleManualAuth} className="space-y-4 text-left">
+            {/* Main Auth Form */}
+            <form onSubmit={handleManualAuth} className="space-y-4 text-left font-mono text-xs">
               {isRegisterMode && (
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold block">
-                    Operative Alias (Name)
+                  <label className="text-[10px] uppercase tracking-wider text-slate-300 font-bold block">
+                    Operative Codename / Alias
                   </label>
                   <input
                     type="text"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="E.g., Commander, Cipher..."
-                    className="w-full bg-black/80 border border-white/20 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-400 transition-all"
+                    placeholder="e.g. Commander, Cipher..."
+                    className="w-full bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition-colors shadow-inner"
                   />
                 </div>
               )}
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold block">
-                  Operative Email
+                <label className="text-[10px] uppercase tracking-wider text-slate-300 font-bold block">
+                  Operative Email Address
                 </label>
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="operative@scenesense.ai"
-                  className="w-full bg-black/80 border border-white/20 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-400 transition-all"
+                  placeholder="operative@scenesense.studio"
+                  className="w-full bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition-colors shadow-inner"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold block">
-                  Encryption Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full bg-black/80 border border-white/20 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-400 transition-all"
-                />
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-300 font-bold block">
+                    Encryption Key (Password)
+                  </label>
+                  {!isRegisterMode && (
+                    <button
+                      type="button"
+                      onClick={handlePasswordReset}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                    >
+                      Forgot Key?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-[#050811] border border-cyan-500/30 focus:border-cyan-400 rounded-xl pl-4 pr-10 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition-colors shadow-inner"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? '👁️' : '🔒'}
+                  </button>
+                </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-emerald-500 to-indigo-600 hover:opacity-90 disabled:opacity-50 text-white font-black uppercase tracking-wider rounded-xl transition-all shadow-lg cursor-pointer text-xs flex items-center justify-center gap-2 mt-2"
+                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-40 text-white font-mono font-bold uppercase tracking-wider rounded-2xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer text-xs flex items-center justify-center gap-2 mt-3 active:scale-95"
               >
                 {loading ? (
-                  <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
+                  <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
                 ) : isRegisterMode ? (
-                  'JOIN BETA PROGRAM'
+                  'INITIALIZE OPERATIVE PROFILE'
                 ) : (
-                  'AUTHENTICATE ACCESS'
+                  'AUTHENTICATE CLEARANCE'
                 )}
               </button>
             </form>
 
             {/* Toggle Mode */}
-            <div className="text-center pt-2">
+            <div className="text-center pt-1 font-mono">
               <button
                 type="button"
                 onClick={() => {
                   setIsRegisterMode(!isRegisterMode);
                   setErrorMessage('');
+                  setInfoMessage('');
                 }}
-                className="text-xs font-mono text-cyan-300 hover:text-white uppercase font-bold tracking-wider cursor-pointer transition-colors"
+                className="text-xs text-cyan-300 hover:text-white uppercase font-bold tracking-wider cursor-pointer transition-colors"
               >
                 {isRegisterMode 
-                  ? 'ALREADY AN OPERATIVE? LOGIN HERE.' 
-                  : 'NEED CLEARANCE? JOIN THE BETA.'}
+                  ? 'ALREADY AN OPERATIVE? SIGN IN HERE' 
+                  : 'NEED CLEARANCE? INITIALIZE REGISTRATION'}
               </button>
             </div>
 
             {/* Google Auth Divider */}
             <div className="relative flex items-center justify-center pt-2">
-              <div className="border-t border-white/10 w-full"></div>
-              <span className="bg-[#0b1120] px-3 text-[10px] font-mono text-gray-500 uppercase tracking-widest absolute">
+              <div className="border-t border-cyan-500/20 w-full" />
+              <span className="bg-[#080d1a] px-3 text-[10px] font-mono text-slate-500 uppercase tracking-widest absolute">
                 OR CONTINUE WITH
               </span>
             </div>
 
-            {/* Google Auth Button with Official Logo */}
+            {/* Google Auth Button */}
             <button
               type="button"
               onClick={handleGoogleAuth}
               disabled={loading}
-              className="w-full py-3 px-4 bg-black/80 hover:bg-black border border-white/20 hover:border-white/40 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-3 cursor-pointer shadow-md"
+              className="w-full py-3 px-4 bg-[#050811] hover:bg-[#0c1424] border border-cyan-500/30 hover:border-cyan-400 text-white font-mono font-bold text-xs uppercase tracking-wider rounded-2xl transition-all flex items-center justify-center gap-3 cursor-pointer shadow-md"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                 <path
@@ -298,18 +360,17 @@ export default function LoginPage() {
                   d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.23 0 3.18 2.68 1.2 6.6l4.08 3.15c.95-2.84 3.6-4.95 6.72-4.95z"
                 />
               </svg>
-              <span>Sign in with Google</span>
+              <span>Authenticate with Google</span>
             </button>
 
             {/* Back Link */}
-            <div className="text-center pt-2 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => router.push('/')}
-                className="text-[11px] font-mono text-gray-400 hover:text-white uppercase tracking-wider transition-colors cursor-pointer"
+            <div className="text-center pt-2 border-t border-cyan-500/15">
+              <Link
+                href="/"
+                className="text-[11px] font-mono text-slate-400 hover:text-white uppercase tracking-wider transition-colors cursor-pointer"
               >
-                ← Return to Mainframe
-              </button>
+                ← Return to Studio Uplink
+              </Link>
             </div>
           </>
         )}

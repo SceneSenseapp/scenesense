@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { 
   doc, 
-  getDoc, 
+  onSnapshot,
   setDoc, 
   updateDoc, 
   increment, 
@@ -84,6 +84,7 @@ export default function ProfileDashboardPage() {
     inventory: [],
     equippedFrame: null,
     equippedTitle: null,
+    equippedTheme: null,
     claimedBounties: []
   });
 
@@ -174,46 +175,54 @@ export default function ProfileDashboardPage() {
     }
   }, []);
 
-  // Dual State & Firestore User Document Self-Healing Initialization
+  // Real-Time Profile Listener & Auto-Provisioning
   useEffect(() => {
     if (!auth) return;
 
+    let unsubUserDoc = () => {};
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      unsubUserDoc();
+
       if (currentUser) {
         setUser(currentUser);
         try {
           if (db) {
             const userRef = doc(db, 'users', currentUser.uid);
-            const userDoc = await getDoc(userRef);
 
-            if (userDoc.exists()) {
-              const data = userDoc.data();
-              setProfileData(prev => ({
-                ...prev,
-                displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
-                walletCoins: typeof data.coins === 'number' ? data.coins : 100,
-                inventory: Array.isArray(data.inventory) ? data.inventory : [],
-                equippedFrame: data.equippedFrame || null,
-                equippedTitle: data.equippedTitle || null,
-                claimedBounties: Array.isArray(data.claimedBounties) ? data.claimedBounties : []
-              }));
-            } else {
-              // Self-healing initialization on first sign-in
-              const initialData = {
-                displayName: currentUser.displayName || 'Mathew Scott',
-                email: currentUser.email || '',
-                coins: 100,
-                inventory: [],
-                equippedFrame: null,
-                equippedTitle: null,
-                claimedBounties: [],
-                createdAt: serverTimestamp()
-              };
-              await setDoc(userRef, initialData, { merge: true });
-              setProfileData(prev => ({ ...prev, ...initialData }));
-            }
+            unsubUserDoc = onSnapshot(userRef, async (snap) => {
+              if (snap.exists()) {
+                const data = snap.data();
+                setProfileData({
+                  displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
+                  role: data.role || 'Head of Production',
+                  clearance: data.clearance || 'Level 4 Director',
+                  walletCoins: typeof data.coins === 'number' ? data.coins : 100,
+                  inventory: Array.isArray(data.inventory) ? data.inventory : [],
+                  equippedFrame: data.equippedFrame || null,
+                  equippedTitle: data.equippedTitle || null,
+                  equippedTheme: data.equippedTheme || null,
+                  claimedBounties: Array.isArray(data.claimedBounties) ? data.claimedBounties : []
+                });
+              } else {
+                // Self-healing initialization on first sign-in
+                const initialData = {
+                  displayName: currentUser.displayName || 'Mathew Scott',
+                  email: currentUser.email || '',
+                  coins: 100,
+                  inventory: [],
+                  equippedFrame: null,
+                  equippedTitle: null,
+                  equippedTheme: null,
+                  claimedBounties: [],
+                  createdAt: serverTimestamp()
+                };
+                await setDoc(userRef, initialData, { merge: true });
+                setProfileData(prev => ({ ...prev, ...initialData }));
+              }
+            });
 
-            // Sync Reviews
+            // Sync User Reviews
             const q = query(
               collection(db, 'reviews'),
               where('userId', '==', currentUser.uid),
@@ -239,25 +248,34 @@ export default function ProfileDashboardPage() {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubUserDoc();
+    };
   }, [router]);
 
   useEffect(() => {
     fetchPersonalizedRecommendations(watchlist || []);
   }, [watchlist, fetchPersonalizedRecommendations]);
 
-  // Read watched state from storage
+  // Read watched state from hook items and localStorage
   useEffect(() => {
+    let hookWatchedCount = (watchlist || []).filter(item => Boolean(item.watched)).length;
+
     try {
       const saved = localStorage.getItem('scenesense_watched_map');
       if (saved) {
         const parsed = JSON.parse(saved);
-        setWatchedCount(Object.values(parsed).filter(Boolean).length);
+        const localCount = Object.values(parsed).filter(Boolean).length;
+        setWatchedCount(Math.max(hookWatchedCount, localCount));
+        return;
       }
     } catch (e) {
       console.warn("Error reading watched map:", e);
     }
-  }, []);
+
+    setWatchedCount(hookWatchedCount);
+  }, [watchlist]);
 
   const savedTitlesCount = (watchlist || []).length;
   const reviewsCount = userReviews.length;
@@ -329,7 +347,7 @@ export default function ProfileDashboardPage() {
     }
   };
 
-  // Toggle Equipment Function (Frame or Title)
+  // Toggle Equipment Function (Frame, Title, or Theme)
   const handleToggleEquip = async (itemId, type) => {
     if (!user) return;
     const isCurrentlyEquipped = profileData[type] === itemId;
@@ -402,7 +420,7 @@ export default function ProfileDashboardPage() {
       case 'title_shadow_operative':
         return 'EXECUTIVE PRODUCER';
       case 'title_archivist':
-        return 'CHIEF ARCHIVIST';
+        return 'CRITERION ARCHIVIST';
       default:
         return 'DIRECTOR';
     }
@@ -536,8 +554,8 @@ export default function ProfileDashboardPage() {
 
       {/* AVATAR CUSTOMIZER POPUP MODAL */}
       {isAvatarModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 pt-20 animate-fade-in">
-          <div className="bg-[#07070d] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-3xl w-full relative shadow-[0_0_60px_rgba(6,182,212,0.3)] space-y-6 flex flex-col max-h-[85vh] mt-4">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-[#07070d] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-3xl w-full relative shadow-[0_0_60px_rgba(6,182,212,0.3)] space-y-6 flex flex-col max-h-[90vh]">
             
             <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4 shrink-0">
               <div>
@@ -590,7 +608,14 @@ export default function ProfileDashboardPage() {
                     className="group relative flex flex-col items-center p-3 bg-[#080d1a] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl transition-all cursor-pointer"
                   >
                     <div className="relative w-14 h-14 rounded-xl overflow-hidden mb-2 border border-cyan-500/30 group-hover:scale-105 transition-transform bg-zinc-900 shrink-0 flex items-center justify-center p-1">
-                      <img src={preset.url} alt={preset.label} className="w-full h-full object-contain" />
+                      <Image 
+                        src={preset.url} 
+                        alt={preset.label} 
+                        fill
+                        unoptimized
+                        sizes="56px"
+                        className="object-contain p-1" 
+                      />
                     </div>
                     <span className="text-[10px] font-mono font-bold text-slate-300 text-center truncate w-full">
                       {preset.label}
@@ -948,7 +973,16 @@ export default function ProfileDashboardPage() {
                   {profileData.inventory.map((itemId) => {
                     const isFrame = itemId.startsWith('frame_');
                     const isTitle = itemId.startsWith('title_');
-                    const equipKey = isFrame ? 'equippedFrame' : isTitle ? 'equippedTitle' : null;
+                    const isTheme = itemId.startsWith('theme_');
+                    
+                    const equipKey = isFrame 
+                      ? 'equippedFrame' 
+                      : isTitle 
+                        ? 'equippedTitle' 
+                        : isTheme 
+                          ? 'equippedTheme' 
+                          : null;
+
                     const isEquipped = equipKey ? profileData[equipKey] === itemId : false;
 
                     const formattedName = itemId
@@ -967,10 +1001,22 @@ export default function ProfileDashboardPage() {
                       >
                         <div className="space-y-1">
                           <span className="text-xs font-bold text-white block">
-                            {isFrame ? `🎞️ ${formattedName} FRAME` : isTitle ? `🏷️ [${formattedName}]` : `⚡ ${formattedName}`}
+                            {isFrame 
+                              ? `🎞️ ${formattedName} FRAME` 
+                              : isTitle 
+                                ? `🏷️ [${formattedName}]` 
+                                : isTheme 
+                                  ? `🎨 ${formattedName} LUT` 
+                                  : `⚡ ${formattedName}`}
                           </span>
                           <span className="text-[10px] font-mono text-slate-400 block">
-                            {isFrame ? 'Avatar Film Reel Border' : isTitle ? 'Opening Screen Credit' : 'Studio Asset'}
+                            {isFrame 
+                              ? 'Avatar Film Reel Border' 
+                              : isTitle 
+                                ? 'Opening Screen Credit' 
+                                : isTheme 
+                                  ? 'Active Color Grade LUT' 
+                                  : 'Studio Production Asset'}
                           </span>
                         </div>
 

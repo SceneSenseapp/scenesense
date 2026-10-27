@@ -1,7 +1,7 @@
-// app/where-to-watch/page.jsx
+// File: app/where-to-watch/page.jsx
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/firebase';
@@ -101,6 +101,7 @@ export default function WhereToWatchPage() {
   const router = useRouter();
   const { watchlist, saveToWatchlist, removeFromWatchlist } = useWatchlist();
 
+  // Route protection
   useEffect(() => {
     if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -113,6 +114,7 @@ export default function WhereToWatchPage() {
     return () => unsubscribe();
   }, [router]);
 
+  // Load live watch providers based on territory & media format
   useEffect(() => {
     let isCancelled = false;
     const fetchProviders = async () => {
@@ -159,15 +161,25 @@ export default function WhereToWatchPage() {
     window.history.pushState(null, '', window.location.pathname);
   };
 
+  // Synchronize modal state with URL query parameters and browser navigation
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const movieId = params.get('movieId');
-    const type = params.get('type') || 'movie';
-    if (movieId) {
-      setSelectedMovieId(movieId);
-      setSelectedMediaType(type);
-    }
+
+    const syncModalFromParams = () => {
+      const params = new URLSearchParams(window.location.search);
+      const movieId = params.get('movieId');
+      const type = params.get('type') || 'movie';
+      if (movieId) {
+        setSelectedMovieId(movieId);
+        setSelectedMediaType(type);
+      } else {
+        setSelectedMovieId(null);
+      }
+    };
+
+    syncModalFromParams();
+    window.addEventListener('popstate', syncModalFromParams);
+    return () => window.removeEventListener('popstate', syncModalFromParams);
   }, []);
 
   const getSingleTypeUrl = useCallback((targetPage, targetType, cat, genre, prov, reg, sort) => {
@@ -241,10 +253,18 @@ export default function WhereToWatchPage() {
       const tvList = (tvData.results || []).map(t => ({ ...t, media_type: 'tv' }));
 
       const combined = [];
+      const seen = new Set();
       const maxLength = Math.max(moviesList.length, tvList.length);
+
       for (let i = 0; i < maxLength; i++) {
-        if (moviesList[i]) combined.push(moviesList[i]);
-        if (tvList[i]) combined.push(tvList[i]);
+        if (moviesList[i] && !seen.has(`movie-${moviesList[i].id}`)) {
+          seen.add(`movie-${moviesList[i].id}`);
+          combined.push(moviesList[i]);
+        }
+        if (tvList[i] && !seen.has(`tv-${tvList[i].id}`)) {
+          seen.add(`tv-${tvList[i].id}`);
+          combined.push(tvList[i]);
+        }
       }
       return combined;
     }
@@ -297,7 +317,12 @@ export default function WhereToWatchPage() {
       if (results && results.length > 0) {
         const filtered = results.filter(item => item.poster_path || item.backdrop_path);
         prevCountRef.current = movies.length;
-        setMovies(prev => [...prev, ...filtered]);
+
+        setMovies(prev => {
+          const seen = new Set(prev.map(m => `${m.media_type || 'm'}-${m.id}`));
+          const uniqueNew = filtered.filter(m => !seen.has(`${m.media_type || 'm'}-${m.id}`));
+          return [...prev, ...uniqueNew];
+        });
 
         setTimeout(() => {
           if (newBatchRef.current) {
@@ -316,7 +341,7 @@ export default function WhereToWatchPage() {
     e.preventDefault();
     e.stopPropagation();
 
-    const isSaved = (watchlist || []).some(item => String(item.id) === String(movie.id));
+    const isSaved = (watchlist || []).some(item => String(item.id || item.movieId) === String(movie.id));
     if (isSaved) {
       removeFromWatchlist(movie.id);
     } else {
@@ -324,24 +349,51 @@ export default function WhereToWatchPage() {
     }
   };
 
+  const resetAllFilters = () => {
+    setSearchQuery('');
+    setMediaType('all');
+    setActiveCategory('trending');
+    setSelectedGenre(null);
+    setSelectedProvider(null);
+    setSortBy('popularity.desc');
+    setPage(1);
+  };
+
   const currentProviderObj = providerList.find(p => p.id === selectedProvider);
   const currentGenreObj = GENRES.find(g => g.id === selectedGenre);
+
+  const hasActiveFilters = useMemo(() => {
+    return Boolean(
+      searchQuery || 
+      selectedGenre !== null || 
+      selectedProvider !== null || 
+      sortBy !== 'popularity.desc' || 
+      mediaType !== 'all' || 
+      activeCategory !== 'trending'
+    );
+  }, [searchQuery, selectedGenre, selectedProvider, sortBy, mediaType, activeCategory]);
 
   if (!user) return null;
 
   return (
     <div className="max-w-7xl mx-auto mt-6 md:mt-10 p-5 md:p-8 min-h-[85vh] flex flex-col bg-[#050508] border border-cyan-500/20 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.15)] text-white relative overflow-hidden font-sans">
       
-      {/* Background Ambient Accents */}
+      {/* Background Depth Halos */}
       <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* HEADER SECTION (CLEAN & SHARP) */}
+      {/* HEADER COMMAND HUD */}
       <div className="border-b border-cyan-500/20 pb-8 mb-8 space-y-6 relative z-10">
         
         {/* Title & Description */}
         <div className="space-y-2">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black uppercase tracking-tight text-white">
+          <div className="flex items-center gap-2 font-mono">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400 bg-cyan-950/80 border border-cyan-500/30 px-2.5 py-0.5 rounded-lg">
+              GLOBAL STREAMING DIRECTORY // 2026
+            </span>
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+          </div>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black uppercase tracking-tight text-white font-mono">
             Where To Watch
           </h1>
           <p className="text-slate-400 text-xs sm:text-sm font-normal max-w-2xl leading-relaxed">
@@ -426,7 +478,7 @@ export default function WhereToWatchPage() {
       </div>
 
       {/* FILTER & TAXONOMY BAR */}
-      <div className="flex items-center justify-between mb-8 flex-wrap gap-4 relative z-10">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-4 relative z-10 font-mono text-xs">
         
         {/* Category Selection Tabs */}
         <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
@@ -445,7 +497,7 @@ export default function WhereToWatchPage() {
                 setSearchQuery('');
                 setActiveCategory(cat.id);
               }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${
                 !searchQuery && !selectedGenre && activeCategory === cat.id 
                   ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.35)] border border-cyan-400/50' 
                   : 'bg-[#080d1a] text-slate-400 hover:text-white border border-cyan-500/20 hover:border-cyan-500/40'
@@ -461,7 +513,7 @@ export default function WhereToWatchPage() {
           <button
             type="button"
             onClick={() => setIsProviderModalOpen(true)}
-            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl text-xs font-mono font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
+            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
           >
             {currentProviderObj?.logo ? (
               <div className="relative w-3.5 h-3.5 rounded overflow-hidden bg-white/10 shrink-0">
@@ -483,7 +535,7 @@ export default function WhereToWatchPage() {
           <button
             type="button"
             onClick={() => setIsGenreModalOpen(true)}
-            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl text-xs font-mono font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
+            className="flex items-center gap-2 bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 px-3.5 py-2 rounded-xl font-bold text-slate-200 transition-all cursor-pointer shadow-inner"
           >
             <span>{currentGenreObj ? currentGenreObj.label : 'All Genres'}</span>
             <span className="text-[9px] text-cyan-400">▼</span>
@@ -495,13 +547,24 @@ export default function WhereToWatchPage() {
               setPage(1);
               setSortBy(e.target.value);
             }}
-            className="bg-[#080d1a] border border-cyan-500/20 text-xs font-mono font-bold text-slate-300 rounded-xl px-3 py-2 outline-none focus:border-cyan-400 cursor-pointer transition-all shadow-inner"
+            className="bg-[#080d1a] border border-cyan-500/20 font-bold text-slate-300 rounded-xl px-3 py-2 outline-none focus:border-cyan-400 cursor-pointer transition-all shadow-inner"
           >
             <option value="popularity.desc">Sort: Popular</option>
             <option value="vote_average.desc">Sort: Rated</option>
             <option value="primary_release_date.desc">Sort: Newest</option>
             <option value="revenue.desc">Sort: Box Office</option>
           </select>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetAllFilters}
+              className="px-3 py-2 bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 rounded-xl font-bold text-[11px] transition-all cursor-pointer shadow-sm"
+              title="Reset all search parameters and active filters"
+            >
+              Reset ✕
+            </button>
+          )}
         </div>
 
       </div>
@@ -523,7 +586,7 @@ export default function WhereToWatchPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5 relative z-10">
             {movies.map((item, index) => {
               const uniqueKey = `${item.id}-${item.media_type || 'title'}-${index}`;
-              const isSaved = (watchlist || []).some(w => String(w.id) === String(item.id));
+              const isSaved = (watchlist || []).some(w => String(w.id || w.movieId) === String(item.id));
               const displayTitle = item.title || item.name || 'Untitled';
               const releaseYear = (item.release_date || item.first_air_date || '').slice(0, 4) || 'N/A';
               const rating = item.vote_average ? Number(item.vote_average).toFixed(1) : null;
@@ -554,19 +617,21 @@ export default function WhereToWatchPage() {
                       ) : (
                         <div className="flex items-center justify-center h-full text-xs text-slate-500 p-2 text-center font-mono">{displayTitle}</div>
                       )}
+
+                      {rating && (
+                        <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-amber-400 border border-amber-500/30">
+                          ★ {rating}
+                        </div>
+                      )}
                     </div>
 
-                    <div className="p-3.5 pb-1 relative z-10 bg-[#080d1a]">
+                    <div className="p-3.5 pb-1 relative z-10 bg-[#080d1a] font-mono">
                       <h3 className="font-bold text-xs line-clamp-1 text-white group-hover:text-cyan-300 transition-colors uppercase tracking-tight" title={displayTitle}>
                         {displayTitle}
                       </h3>
-                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-1">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
                         <span>{releaseYear}</span>
-                        {rating && (
-                          <span className="text-amber-400 font-bold flex items-center gap-1">
-                            <span>★</span> {rating}
-                          </span>
-                        )}
+                        <span className="text-cyan-400/80 group-hover:text-cyan-300 text-[9px] uppercase">Dossier →</span>
                       </div>
                     </div>
                   </div>
@@ -614,7 +679,7 @@ export default function WhereToWatchPage() {
             <div className="flex items-center justify-between pb-4 border-b border-cyan-500/20 mb-6">
               <div>
                 <h3 className="text-base font-bold text-white uppercase tracking-tight font-mono">Filter Streaming Service</h3>
-                <p className="text-xs text-slate-400 mt-0.5 font-mono">Available platforms in {selectedRegion}</p>
+                <p className="text-xs text-slate-400 mt-0.5 font-mono">Available platforms in {selectedRegion}[cite: 22]</p>
               </div>
               <button
                 type="button"
@@ -710,7 +775,7 @@ export default function WhereToWatchPage() {
         </div>
       )}
 
-      {/* MODAL COMPONENT */}
+      {/* DETAIL DOSSIER MODAL */}
       <MovieModal 
         movieId={selectedMovieId} 
         mediaType={selectedMediaType} 

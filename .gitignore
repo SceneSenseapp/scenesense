@@ -54,3 +54,11 @@ dist/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Sensitive service credentials & secrets
+*.json
+!package*.json
+!tsconfig*.json
+config/
+.env*.local
+.env
