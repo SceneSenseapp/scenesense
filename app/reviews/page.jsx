@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import Image from 'next/image';
 import { 
   collection, 
   query, 
@@ -17,6 +18,8 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '@/firebase';
+import toast from 'react-hot-toast';
+import { trackQuestEvent } from '@/lib/quest-tracker';
 
 // TMDB Standard Genre Map
 const TMDB_GENRES = {
@@ -175,9 +178,13 @@ export default function GlobalReviewsPage() {
   const [suggestions, setSuggestions] = useState([]);
   const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
   const searchTimeoutRef = useRef(null);
+  const healedDocIdsRef = useRef(new Set());
 
   useEffect(() => {
-    setIsMounted(true);
+    const frame = requestAnimationFrame(() => {
+      setIsMounted(true);
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   // Lock background scroll when any review modal is active
@@ -247,11 +254,11 @@ export default function GlobalReviewsPage() {
         setLoading(false);
 
         data.forEach(async (rev) => {
-          if ((!rev.posterPath && !rev.poster) && rev.movieTitle) {
+          if (!healedDocIdsRef.current.has(rev.id) && (!rev.posterPath && !rev.poster) && rev.movieTitle) {
+            healedDocIdsRef.current.add(rev.id);
             try {
-              const tmdbKey = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
               const res = await fetch(
-                `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(rev.movieTitle)}&include_adult=false&language=en-US&page=1`
+                `/api/tmdb?endpoint=search/movie&query=${encodeURIComponent(rev.movieTitle)}&language=en-US&page=1`
               );
               if (res.ok) {
                 const json = await res.json();
@@ -542,11 +549,10 @@ export default function GlobalReviewsPage() {
       }
 
       if (remoteResults.length === 0) {
-        const tmdbKey = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
         const endpoint = deployMediaType === 'tv' ? 'search/tv' : 'search/movie';
         try {
           const directRes = await fetch(
-            `https://api.themoviedb.org/3/${endpoint}?api_key=${tmdbKey}&query=${encodeURIComponent(term)}&include_adult=false&language=en-US&page=1`
+            `/api/tmdb?endpoint=${endpoint}&query=${encodeURIComponent(term)}&language=en-US&page=1`
           );
           if (directRes.ok) {
             const data = await directRes.json();
@@ -641,6 +647,7 @@ export default function GlobalReviewsPage() {
 
       const newReviewPayload = {
         movieId: finalId,
+        targetId: finalId,
         tmdbId: selectedMovieTarget?.id ? Number(selectedMovieTarget.id) : null,
         mediaType: String(deployMediaType || 'movie'),
         movieTitle: String(deployMovieTitle).trim(),
@@ -650,6 +657,9 @@ export default function GlobalReviewsPage() {
         genre_ids: Array.isArray(selectedMovieTarget?.genre_ids) ? selectedMovieTarget.genre_ids : [],
         rating: Number(deployRating) || 5.0,
         reviewText: String(deployComment || '').trim() || 'Verified critique dispatch.',
+        content: String(deployComment || '').trim() || 'Verified critique dispatch.',
+        text: String(deployComment || '').trim() || 'Verified critique dispatch.',
+        isSpoiler: Boolean(containsSpoilers),
         containsSpoilers: Boolean(containsSpoilers),
         posterPath: finalPoster,
         userId: String(currentAuthUser.uid),
@@ -658,7 +668,8 @@ export default function GlobalReviewsPage() {
         createdAt: serverTimestamp()
       };
 
-      const docRef = await addDoc(collection(db, 'reviews'), newReviewPayload);
+      await addDoc(collection(db, 'reviews'), newReviewPayload);
+      trackQuestEvent(currentAuthUser.uid, 'community_post_1', 1);
 
       setDeployMovieTitle('');
       setSelectedMovieTarget(null);
@@ -668,7 +679,7 @@ export default function GlobalReviewsPage() {
       setContainsSpoilers(false);
       setShowDeployModal(false);
       
-      alert(`Dispatch Saved! ID: ${docRef.id}`);
+      toast.success('Critique dispatch logged! (+15 XP)');
     } catch (err) {
       console.error("Firestore write failure:", err);
       alert(`Firestore Write Rejection: [${err.code || 'ERROR'}] ${err.message}`);
@@ -836,7 +847,7 @@ export default function GlobalReviewsPage() {
       </aside>
 
       {/* RIGHT MAIN TERMINAL VIEWPORT */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#050508]">
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#050508]">
         
         <header className="h-16 px-6 border-b border-cyan-500/20 bg-[#08080f]/80 backdrop-blur-md flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -913,10 +924,13 @@ export default function GlobalReviewsPage() {
                   >
                     <div className="relative aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
                       {posterSrc ? (
-                        <img
+                        <Image
                           src={posterSrc}
                           alt={film.movieTitle || 'Poster'}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          fill
+                          unoptimized
+                          sizes="(max-width: 640px) 50vw, 180px"
+                          className="object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 gap-1">
@@ -976,7 +990,7 @@ export default function GlobalReviewsPage() {
           </div>
         )}
 
-      </main>
+      </div>
 
       {/* DEDICATED FILM REVIEW DOSSIER MODAL */}
       {activeInspectingFilm && (
@@ -1028,10 +1042,13 @@ export default function GlobalReviewsPage() {
               <div className="p-4 bg-[#050811] border border-cyan-500/25 rounded-2xl flex gap-4 items-center">
                 {activeInspectingFilm.posterPath ? (
                   <div className="relative w-16 aspect-[2/3] rounded-xl overflow-hidden shrink-0 border border-cyan-500/30 bg-zinc-900">
-                    <img
+                    <Image
                       src={formatPosterUrl(activeInspectingFilm.posterPath, 'w300')}
                       alt={activeInspectingFilm.movieTitle}
-                      className="w-full h-full object-cover"
+                      fill
+                      unoptimized
+                      sizes="64px"
+                      className="object-cover"
                     />
                   </div>
                 ) : (
@@ -1089,7 +1106,7 @@ export default function GlobalReviewsPage() {
                         <div className="flex items-center gap-2.5">
                           {rev.userPhoto ? (
                             <div className="relative w-7 h-7 rounded-full overflow-hidden border border-cyan-500/30 shrink-0">
-                              <img src={rev.userPhoto} alt={rev.displayAuthor || 'User'} className="w-full h-full object-cover animate-fade-in" />
+                              <Image src={rev.userPhoto} alt={rev.displayAuthor || 'User'} fill unoptimized sizes="28px" className="object-cover animate-fade-in" />
                             </div>
                           ) : (
                             <div className="w-7 h-7 rounded-full bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-[10px] text-cyan-300 font-bold uppercase shrink-0">
@@ -1236,10 +1253,13 @@ export default function GlobalReviewsPage() {
                           >
                             <div className="relative aspect-[2/3] w-full rounded-lg bg-zinc-800 overflow-hidden mb-1.5">
                               {poster ? (
-                                <img
+                                <Image
                                   src={poster}
                                   alt={title || 'Watchlist title'}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                  fill
+                                  unoptimized
+                                  sizes="96px"
+                                  className="object-cover group-hover:scale-105 transition-transform"
                                 />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-xs">🎬</div>
@@ -1298,10 +1318,13 @@ export default function GlobalReviewsPage() {
                           <div className="flex items-center gap-3.5 min-w-0">
                             {poster ? (
                               <div className="relative w-9 h-14 rounded-lg overflow-hidden shrink-0 border border-cyan-500/40 bg-zinc-900">
-                                <img 
-                                  src={poster} 
-                                  alt={m.title || m.name || "poster"} 
-                                  className="w-full h-full object-cover animate-fade-in" 
+                                <Image
+                                  src={poster}
+                                  alt={m.title || m.name || "poster"}
+                                  fill
+                                  unoptimized
+                                  sizes="36px"
+                                  className="object-cover animate-fade-in"
                                 />
                               </div>
                             ) : (
@@ -1348,10 +1371,13 @@ export default function GlobalReviewsPage() {
                     <div className="flex gap-3 animate-fade-in">
                       {deployPoster ? (
                         <div className="relative w-20 aspect-[2/3] rounded-xl overflow-hidden shrink-0 border border-cyan-500/30 shadow-md bg-zinc-900">
-                          <img 
-                            src={deployPoster} 
-                            alt={deployMovieTitle || "Poster"} 
-                            className="w-full h-full object-cover animate-fade-in"
+                          <Image
+                            src={deployPoster}
+                            alt={deployMovieTitle || "Poster"}
+                            fill
+                            unoptimized
+                            sizes="80px"
+                            className="object-cover animate-fade-in"
                           />
                         </div>
                       ) : (

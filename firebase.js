@@ -1,4 +1,5 @@
-import { initializeApp } from "firebase/app";
+// File: firebase.js
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
@@ -9,11 +10,26 @@ const firebaseConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
+let app = null;
+let authInstance = null;
+let dbInstance = null;
+let storageInstance = null;
 
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+try {
+  if (firebaseConfig.apiKey && firebaseConfig.projectId) {
+    app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    authInstance = getAuth(app);
+    dbInstance = getFirestore(app);
+    storageInstance = getStorage(app);
+  }
+} catch (err) {
+  console.warn("[Firebase Client] Deferred initialization notice:", err?.message || err);
+}
+
+export const auth = authInstance;
+export const db = dbInstance;
+export const storage = storageInstance;
+export default app;

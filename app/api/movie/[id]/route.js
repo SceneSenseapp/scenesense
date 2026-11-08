@@ -1,44 +1,70 @@
-// app/api/movie/[id]/route.js
+// File: app/api/movie/[id]/route.js
 import { NextResponse } from 'next/server';
+import {
+  SUPPORTED_REGIONS,
+  getEnrichedMovie,
+  getAggregatedRatings,
+  getWatchmodeDeepLinks,
+  synthesizeStreamingSources,
+} from '@/lib/movie-apis';
 
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const REGION_SET = new Set(SUPPORTED_REGIONS);
 
 export async function GET(request, { params }) {
-  // Await params for Next.js 15+ compatibility
   const resolvedParams = await params;
   const { id } = resolvedParams;
 
   if (!id) {
-    return NextResponse.json({ error: 'Movie ID is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Media ID is required' }, { status: 400 });
   }
 
-  try {
-    // Revalidates on the server once every 24 hours (86,400 seconds)
-    const res = await fetch(`${TMDB_BASE_URL}/movie/${id}?append_to_response=credits,videos`, {
-      headers: {
-        accept: 'application/json',
-        Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN || ''}`,
-      },
-      next: { revalidate: 86400 },
-    });
+  const { searchParams } = new URL(request.url);
+  const mediaType = searchParams.get('type') === 'tv' ? 'tv' : 'movie';
+  const rawRegion = (searchParams.get('region') || 'US').toUpperCase();
+  const region = REGION_SET.has(rawRegion) ? rawRegion : 'US';
 
-    if (!res.ok) {
+  try {
+    // Parallelize TMDB single-request enrichment + Watchmode regional deep-links
+    const [data, watchmodeSources] = await Promise.all([
+      getEnrichedMovie(id, mediaType),
+      getWatchmodeDeepLinks(id, mediaType, region),
+    ]);
+
+    if (!data) {
       return NextResponse.json(
-        { error: 'Failed to fetch movie details from TMDB' },
-        { status: res.status }
+        { error: `Failed to fetch ${mediaType} details from TMDB` },
+        { status: 404 }
       );
     }
 
-    const data = await res.json();
+    const imdbId = data.imdb_id || data.external_ids?.imdb_id || null;
+    const externalRatings = imdbId ? await getAggregatedRatings(imdbId) : null;
+    const displayTitle = data.title || data.name || 'Untitled';
 
-    return NextResponse.json(data, {
-      status: 200,
-      headers: {
-        'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=43200',
+    const streamingSources = synthesizeStreamingSources(
+      data['watch/providers'],
+      displayTitle,
+      region,
+      watchmodeSources
+    );
+
+    return NextResponse.json(
+      {
+        ...data,
+        media_type: mediaType,
+        region,
+        externalRatings,
+        streamingSources,
       },
-    });
+      {
+        status: 200,
+        headers: {
+          'Cache-Control': 'public, s-maxage=43200, stale-while-revalidate=21600',
+        },
+      }
+    );
   } catch (error) {
-    console.error('Error fetching movie details:', error);
+    console.error('Error fetching media details:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

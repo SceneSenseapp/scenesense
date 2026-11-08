@@ -1,63 +1,86 @@
+// File: app/api/email/inbound/route.js
 import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
+import { generateWithCascade, safeParseJson } from '@/lib/server/ai-gateway';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
   try {
-    const payload = await request.json();
-    
-    // Extract incoming email details (structure depends on Resend/SendGrid inbound payload)
-    const senderEmail = payload.from;
-    const senderName = payload.sender_name || 'Operative';
-    const emailSubject = payload.subject;
-    const emailBody = payload.text || payload.html;
+    const payload = await request.json().catch(() => ({}));
 
-    // 1. Ask Gemini to analyze, draft a reply, and score urgency (1-10)
-    const prompt = `
-      You are the automated AI Mail Officer for SceneSense Studio. 
-      Analyze the following incoming email from a user.
-      
-      Sender: ${senderName} (${senderEmail})
-      Subject: ${emailSubject}
-      Message: ${emailBody}
+    const senderEmail = (payload.from || payload.email || '').trim();
+    const senderName = (payload.sender_name || payload.name || 'Viewer').trim();
+    const emailSubject = (payload.subject || 'General Studio Inquiry').trim();
+    const emailBody = (payload.text || payload.html || payload.message || '').trim();
 
-      Provide your response strictly in the following JSON format without markdown ticks:
-      {
-        "urgencyScore": <number from 1 to 10 where 10 is critical/VIP/business deal/legal issue>,
-        "summary": "One sentence summary of what this email is about for Commander Matt.",
-        "shouldNotifyCommander": <boolean true if urgencyScore >= 7 or requires personal attention>,
-        "autoReplyDraft": "A professional, polite AI response addressing their inquiry, acting as the SceneSense Studio support assistant."
-      }
-    `;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    const analysis = JSON.parse(response.text.trim());
-
-    // 2. Send the automated response back to the user (using Resend API)
-    if (analysis.autoReplyDraft) {
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        },
-        body: JSON.stringify({
-          from: 'SceneSense Studio <support@scenesense.ai>',
-          to: [senderEmail],
-          subject: `Re: ${emailSubject}`,
-          text: `${analysis.autoReplyDraft}\n\n---\nSceneSense Autonomous Mail Officer (v2.6)`,
-        }),
-      });
+    if (!senderEmail || !emailBody) {
+      return NextResponse.json(
+        { error: 'Sender email and message body are required.' },
+        { status: 400 }
+      );
     }
 
-    // 3. If high priority, ping Commander (via Telegram / Discord / or internal DB log)
-    if (analysis.shouldNotifyCommander) {
-      await sendCommanderAlert({
+    let analysis = {
+      urgencyScore: 4,
+      summary: `Inbound message received from ${senderName} regarding "${emailSubject}".`,
+      shouldNotifyTeam: false,
+      autoReplyDraft: `Hello ${senderName},\n\nThank you for reaching out regarding "${emailSubject}". Your message has been logged by SceneSense Studio Support and our team will follow up shortly.`,
+    };
+
+    const prompt = `You are the automated AI Mail Officer for SceneSense Studio.
+Analyze the following incoming inquiry from a user.
+
+Sender: ${senderName} (${senderEmail})
+Subject: ${emailSubject}
+Message: ${emailBody.slice(0, 3000)}
+
+Provide your response strictly in JSON format:
+{
+  "urgencyScore": 5,
+  "summary": "One sentence summary of what this email is about for the SceneSense support team.",
+  "shouldNotifyTeam": false,
+  "autoReplyDraft": "A polite, helpful response addressing their inquiry on behalf of SceneSense Studio Support."
+}`;
+
+    const aiResult = await generateWithCascade({
+      contents: prompt,
+      responseMimeType: 'application/json',
+      temperature: 0.35,
+    });
+
+    const parsed = aiResult.success ? safeParseJson(aiResult.text) : null;
+    if (parsed && parsed.autoReplyDraft) {
+      analysis = {
+        urgencyScore: Number(parsed.urgencyScore) || 4,
+        summary: parsed.summary || analysis.summary,
+        shouldNotifyTeam: Boolean(parsed.shouldNotifyTeam ?? parsed.shouldNotifyCommander),
+        autoReplyDraft: parsed.autoReplyDraft,
+      };
+    }
+
+    if (analysis.autoReplyDraft && process.env.RESEND_API_KEY) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          },
+          body: JSON.stringify({
+            from: 'SceneSense Studio <support@scenesense.app>',
+            to: [senderEmail],
+            subject: `Re: ${emailSubject}`,
+            text: `${analysis.autoReplyDraft}\n\n---\nSceneSense Studio Support`,
+          }),
+        });
+      } catch (resendErr) {
+        console.warn('Resend dispatch notice:', resendErr.message);
+      }
+    }
+
+    if (analysis.shouldNotifyTeam) {
+      await sendTeamAlert({
         sender: senderName,
         email: senderEmail,
         subject: emailSubject,
@@ -68,31 +91,35 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, analysis }, { status: 200 });
   } catch (error) {
-    console.error("Inbound email processing failed:", error);
+    console.error('Inbound email processing failed:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// Helper to push high-priority alerts to Commander's personal feed
-async function sendCommanderAlert(data) {
+async function sendTeamAlert(data) {
   const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
 
   if (!telegramBotToken || !chatId) return;
 
-  const message = `🚨 **HIGH-PRIORITY SCENESENSE EMAIL** 🚨\n\n` +
+  const message =
+    `🚨 **HIGH-PRIORITY SCENESENSE INQUIRY**\n\n` +
     `👤 **Sender:** ${data.sender} (${data.email})\n` +
     `📌 **Subject:** ${data.subject}\n` +
     `⭐ **Urgency Score:** ${data.score}/10\n\n` +
     `📝 **Summary:** ${data.summary}`;
 
-  await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: message,
-      parse_mode: 'Markdown',
-    }),
-  });
+  try {
+    await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+  } catch (err) {
+    console.warn('Telegram alert dispatch warning:', err.message);
+  }
 }

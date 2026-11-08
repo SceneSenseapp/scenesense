@@ -1,65 +1,93 @@
-import { NextResponse } from 'next/server';
-import { Resend } from 'resend';
-import { GoogleGenAI } from '@google/genai';
+// File: app/api/email/send/route.js
+import { NextResponse } from "next/server";
+import { Resend } from "resend";
+import {
+  generateWithCascade,
+  safeParseJson,
+  resolveGeminiApiKey,
+} from "@/lib/server/ai-gateway";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(request) {
   try {
-    const { email, message } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const email = (body.email || "").trim();
+    const message = (body.message || "").trim();
 
     if (!email || !message) {
-      return NextResponse.json({ error: 'Email and message are required.' }, { status: 400 });
+      return NextResponse.json(
+        { error: "Email and message are required." },
+        { status: 400 }
+      );
     }
 
     const resendApiKey = process.env.RESEND_API_KEY;
-    const geminiApiKey = process.env.GEMINI_API_KEY;
 
-    if (!resendApiKey || !geminiApiKey) {
-      return NextResponse.json({ error: 'Studio communication keys not configured.' }, { status: 500 });
+    let analysis = {
+      urgencyScore: 5,
+      summary: `Support inquiry received from ${email}.`,
+      shouldNotifyCommander: false,
+      autoReplyDraft:
+        "Greetings Operative,\n\nYour transmission has been received by SceneSense Studio Command. Our support team has logged your inquiry and will follow up shortly.",
+    };
+
+    if (resolveGeminiApiKey()) {
+      const prompt = `You are the autonomous AI Mail Officer for SceneSense Studio.
+A user has submitted an inquiry through the contact terminal.
+
+User Email: ${email}
+Message: ${message.slice(0, 3000)}
+
+Provide your response strictly in JSON format:
+{
+  "urgencyScore": 5,
+  "summary": "One sentence summary of the inquiry for Studio Support.",
+  "shouldNotifyCommander": false,
+  "autoReplyDraft": "A professional, polite AI response addressing their inquiry as the SceneSense Studio support assistant."
+}`;
+
+      const aiRes = await generateWithCascade({
+        contents: prompt,
+        responseMimeType: "application/json",
+        temperature: 0.4,
+      });
+
+      const parsed = safeParseJson(aiRes.text);
+      if (parsed && parsed.autoReplyDraft) {
+        analysis = parsed;
+      }
     }
 
-    const resend = new Resend(resendApiKey);
-    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-
-    // 1. Generate AI Auto-Reply and Urgency Assessment using Gemini
-    const prompt = `
-      You are the autonomous AI Mail Officer for SceneSense Studio.
-      A user has submitted an inquiry through the contact terminal.
-      
-      User Email: ${email}
-      Message: ${message}
-
-      Provide your response strictly in the following JSON format without markdown ticks:
-      {
-        "urgencyScore": <number from 1 to 10 where 10 is critical business/legal/VIP>,
-        "summary": "One sentence summary of the inquiry for Commander Matt.",
-        "shouldNotifyCommander": <boolean true if urgencyScore >= 7>,
-        "autoReplyDraft": "A professional, polite AI response addressing their inquiry as the SceneSense Studio support assistant."
+    let emailDispatched = false;
+    if (resendApiKey) {
+      try {
+        const resend = new Resend(resendApiKey);
+        await resend.emails.send({
+          from: "SceneSense Studio <onboarding@resend.dev>",
+          to: [email],
+          subject: "Re: Your Inquiry to SceneSense Studio",
+          text: `${analysis.autoReplyDraft}\n\n---\nSceneSense Studio Support (support@scenesense.app)`,
+        });
+        emailDispatched = true;
+      } catch (sendErr) {
+        console.warn("Resend outbound notice:", sendErr.message);
       }
-    `;
+    }
 
-    const aiResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    const analysis = JSON.parse(aiResponse.text.trim());
-
-    // 2. Send the AI Auto-Reply back to the user via Resend
-    await resend.emails.send({
-      from: 'SceneSense Studio <onboarding@resend.dev>',
-      to: [email],
-      subject: 'Re: Your Transmission to SceneSense Studio',
-      text: `${analysis.autoReplyDraft}\n\n---\nSceneSense Autonomous Mail Officer (v2.6)`,
-    });
-
-    return NextResponse.json({ 
-      success: true, 
-      summary: analysis.summary,
-      urgency: analysis.urgencyScore 
-    }, { status: 200 });
-
+    return NextResponse.json(
+      {
+        success: true,
+        emailDispatched,
+        summary: analysis.summary,
+        urgency: analysis.urgencyScore,
+        autoReply: analysis.autoReplyDraft,
+      },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error('Email transmission error:', error);
+    console.error("Email transmission error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -1,76 +1,198 @@
 @import "tailwindcss";
 
-:root {
-  --background: #030307;
-  --foreground: #ededed;
+:root,
+[data-studio-lut="default"] {
+  --background: #04060d;
+  --foreground: #f1f5f9;
+  --studio-surface: rgba(11, 16, 29, 0.82);
+  --studio-surface-elevated: rgba(15, 23, 42, 0.9);
+  --studio-border: rgba(148, 163, 184, 0.14);
+  --studio-border-accent: rgba(34, 211, 238, 0.32);
+  --studio-accent: #22d3ee;
+  --studio-accent-secondary: #34d399;
+}
+
+[data-studio-lut="theme_matrix_emerald"] {
+  --studio-border-accent: rgba(52, 211, 153, 0.36);
+  --studio-accent: #34d399;
+  --studio-accent-secondary: #2dd4bf;
+}
+
+[data-studio-lut="theme_noir_crimson"] {
+  --studio-border-accent: rgba(251, 113, 133, 0.36);
+  --studio-accent: #fb7185;
+  --studio-accent-secondary: #f97316;
+}
+
+[data-studio-lut="theme_cyber_violet"] {
+  --studio-border-accent: rgba(192, 132, 252, 0.36);
+  --studio-accent: #c084fc;
+  --studio-accent-secondary: #22d3ee;
+}
+
+[data-studio-lut="theme_imax_gold"] {
+  --studio-border-accent: rgba(251, 191, 36, 0.38);
+  --studio-accent: #fbbf24;
+  --studio-accent-secondary: #f59e0b;
+}
+
+[data-studio-lut="theme_blade_runner_teal"] {
+  --studio-border-accent: rgba(45, 212, 191, 0.38);
+  --studio-accent: #2dd4bf;
+  --studio-accent-secondary: #f59e0b;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Custom Selection Styles */
+::selection {
+  background: rgba(34, 211, 238, 0.28);
+  color: #ffffff;
 }
 
 @layer utilities {
-  /* 3D Holographic Card Lift & Depth */
-  .cyber-card-3d {
-    background: linear-gradient(135deg, rgba(16, 16, 32, 0.9) 0%, rgba(8, 8, 18, 0.95) 100%);
-    border: 1px solid rgba(6, 182, 212, 0.25);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .cyber-card-3d:hover {
-    transform: translateY(-6px) scale(1.01);
-    border-color: rgba(6, 182, 212, 0.6);
-    box-shadow: 0 30px 70px rgba(6, 182, 212, 0.25), inset 0 1px 0 rgba(6, 182, 212, 0.4);
+  /* Master Clean Studio Panel */
+  .studio-panel {
+    background: linear-gradient(180deg, rgba(13, 19, 34, 0.86) 0%, rgba(7, 10, 20, 0.92) 100%);
+    border: 1px solid var(--studio-border);
+    box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(20px);
   }
 
-  /* Volumetric Neon Glows */
+  .studio-panel-accent {
+    background: linear-gradient(180deg, rgba(13, 19, 34, 0.9) 0%, rgba(7, 10, 20, 0.95) 100%);
+    border: 1px solid var(--studio-border-accent);
+    box-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(24px);
+  }
+
+  /* 3D Holographic Card Lift & Depth (refined studio elevation) */
+  .cyber-card-3d {
+    background: linear-gradient(145deg, rgba(15, 21, 38, 0.88) 0%, rgba(8, 11, 21, 0.95) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease, box-shadow 0.35s ease;
+  }
+
+  .cyber-card-3d:hover {
+    transform: translateY(-4px);
+    border-color: var(--studio-border-accent);
+    box-shadow: 0 26px 60px rgba(0, 0, 0, 0.82), 0 0 28px rgba(34, 211, 238, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+
+  /* Volumetric Glows */
   .neon-glow-cyan {
-    box-shadow: 0 0 40px rgba(6, 182, 212, 0.35);
+    box-shadow: 0 0 36px rgba(6, 182, 212, 0.28);
   }
   .neon-glow-amber {
-    box-shadow: 0 0 40px rgba(245, 158, 11, 0.35);
+    box-shadow: 0 0 36px rgba(245, 158, 11, 0.28);
+  }
+  .neon-glow-red {
+    box-shadow: 0 0 36px rgba(220, 38, 38, 0.28);
   }
 
-  /* Cinematic Scanline Grid Background */
+  /* Subtle Architectural Grid Background */
   .cyber-grid-bg {
-    background-image: linear-gradient(to right, rgba(6, 182, 212, 0.03) 1px, transparent 1px),
-                      linear-gradient(to bottom, rgba(6, 182, 212, 0.03) 1px, transparent 1px);
-    background-size: 32px 32px;
+    background-image: linear-gradient(to right, rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
   }
 
-  /* Stealth Pill Scrollbar (Invisible track, rounded pill thumb appearing on hover) */
-  .scrollbar-stealth-pill {
+  /* Stealth Pill Scrollbar */
+  .scrollbar-stealth-pill,
+  .custom-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+    scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
     transition: scrollbar-color 0.3s ease;
   }
-  .scrollbar-stealth-pill:hover {
-    scrollbar-color: rgba(6, 182, 212, 0.4) transparent;
+  .scrollbar-stealth-pill:hover,
+  .custom-scrollbar:hover {
+    scrollbar-color: rgba(34, 211, 238, 0.45) transparent;
   }
-  .scrollbar-stealth-pill::-webkit-scrollbar {
+  .scrollbar-stealth-pill::-webkit-scrollbar,
+  .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-  .scrollbar-stealth-pill::-webkit-scrollbar-track {
+  .scrollbar-stealth-pill::-webkit-scrollbar-track,
+  .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
-  .scrollbar-stealth-pill::-webkit-scrollbar-thumb {
-    background: transparent;
+  .scrollbar-stealth-pill::-webkit-scrollbar-thumb,
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.22);
     border-radius: 9999px;
-    transition: background 0.3s ease;
+    transition: background 0.25s ease;
   }
-  .scrollbar-stealth-pill:hover::-webkit-scrollbar-thumb {
-    background: rgba(6, 182, 212, 0.5);
-  }
-  .scrollbar-stealth-pill::-webkit-scrollbar-thumb:hover {
-    background: rgba(6, 182, 212, 0.9);
+  .scrollbar-stealth-pill:hover::-webkit-scrollbar-thumb,
+  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: rgba(34, 211, 238, 0.5);
   }
 }
 
 .neon {
-  text-shadow: 0 0 8px rgba(122,60,255,0.8), 
-               0 0 16px rgba(46,230,255,0.6);
+  text-shadow: 0 0 8px rgba(122, 60, 255, 0.65), 0 0 16px rgba(46, 230, 255, 0.45);
+}
+
+.neon-cyan-text {
+  text-shadow: 0 0 12px rgba(6, 182, 212, 0.5);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-radar-sweep {
+  animation: radar-sweep 4s linear infinite;
 }

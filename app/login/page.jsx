@@ -8,7 +8,8 @@ import {
   createUserWithEmailAndPassword, 
   updateProfile,
   signInWithPopup,
-  GoogleAuthProvider
+  GoogleAuthProvider,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
@@ -22,10 +23,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [isBetaSuccess, setIsBetaSuccess] = useState(false); // NEW: Beta acknowledgment state
+  const [resetStatus, setResetStatus] = useState('');
+  const [isBetaSuccess, setIsBetaSuccess] = useState(false);
 
   const syncUserToFirestore = async (user, customName) => {
     try {
+      if (!db) return;
       const userRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userRef);
 
@@ -33,9 +36,21 @@ export default function LoginPage() {
         await setDoc(userRef, {
           uid: user.uid,
           email: user.email,
-          displayName: customName || user.displayName || 'Operative',
+          displayName: customName || user.displayName || user.email?.split('@')[0] || 'Operative',
           photoURL: user.photoURL || null,
           isVip: false,
+          coins: 150,
+          tokens: 150,
+          walletBalance: 150,
+          xp: 320,
+          level: 1,
+          faction: 'Sci-Fi Masterminds',
+          equippedTitle: 'Novice Cinephile',
+          equippedTheme: 'theme_default',
+          equippedFrame: 'frame_none',
+          inventory: [],
+          watchlist: [],
+          claimedBounties: [],
           createdAt: serverTimestamp(),
           lastLogin: serverTimestamp(),
         });
@@ -50,6 +65,7 @@ export default function LoginPage() {
   const handleManualAuth = async (e) => {
     e.preventDefault();
     setErrorMessage('');
+    setResetStatus('');
     setLoading(true);
 
     try {
@@ -108,8 +124,24 @@ export default function LoginPage() {
     }
   };
 
+  const handlePasswordReset = async () => {
+    setErrorMessage('');
+    setResetStatus('');
+    if (!email.trim()) {
+      setErrorMessage('Enter your Operative Email above first, then click Forgot Password.');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setResetStatus(`Password recovery link dispatched to ${email.trim()}. Check your inbox.`);
+    } catch (error) {
+      setErrorMessage(error.message?.replace('Firebase: ', '') || 'Unable to send password recovery email.');
+    }
+  };
+
   const handleGoogleAuth = async () => {
     setErrorMessage('');
+    setResetStatus('');
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
@@ -129,7 +161,7 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-6 bg-black text-white relative selection:bg-emerald-500/40 font-sans">
+    <div className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-6 bg-black text-white relative selection:bg-emerald-500/40 font-sans">
       <div className="absolute inset-0 z-0 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none"></div>
 
       <div className="relative z-10 w-full max-w-md bg-[#0b1120] border-2 border-white/10 rounded-3xl p-8 shadow-[0_20px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl space-y-6">
@@ -142,13 +174,13 @@ export default function LoginPage() {
             </div>
             <div className="space-y-2">
               <span className="text-[10px] font-mono tracking-[0.25em] text-emerald-400 font-bold uppercase block">
-                UPLINK SECURED // BETA ACCESS
+                UPLINK SECURED // BETA ACCESS (+150 CREDITS)
               </span>
               <h2 className="text-xl font-black uppercase tracking-tight text-white">
                 Thank You for Your Interest
               </h2>
               <p className="text-xs text-gray-300 leading-relaxed font-sans px-2">
-                Thank you for having an interest in SceneSense and using our Beta version. The official launch is on its way.
+                Thank you for having an interest in SceneSense and using our Beta version. Your profile has been credited with 150 starter SceneCents.
               </p>
             </div>
             <div className="pt-4">
@@ -188,6 +220,13 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* Password Recovery Confirmation Box */}
+            {resetStatus && (
+              <div className="p-3.5 bg-emerald-950/50 border border-emerald-500/60 rounded-xl text-xs text-emerald-200 font-mono text-center animate-fadeIn">
+                <p>{resetStatus}</p>
+              </div>
+            )}
+
             {/* Form */}
             <form onSubmit={handleManualAuth} className="space-y-4 text-left">
               {isRegisterMode && (
@@ -221,9 +260,20 @@ export default function LoginPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold block">
-                  Encryption Password
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-gray-300 font-bold block">
+                    Encryption Password
+                  </label>
+                  {!isRegisterMode && (
+                    <button
+                      type="button"
+                      onClick={handlePasswordReset}
+                      className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                    >
+                      Forgot Password?
+                    </button>
+                  )}
+                </div>
                 <input
                   type="password"
                   required
@@ -242,7 +292,7 @@ export default function LoginPage() {
                 {loading ? (
                   <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
                 ) : isRegisterMode ? (
-                  'JOIN BETA PROGRAM'
+                  'JOIN BETA PROGRAM (+150 CREDITS)'
                 ) : (
                   'AUTHENTICATE ACCESS'
                 )}
@@ -256,6 +306,7 @@ export default function LoginPage() {
                 onClick={() => {
                   setIsRegisterMode(!isRegisterMode);
                   setErrorMessage('');
+                  setResetStatus('');
                 }}
                 className="text-xs font-mono text-cyan-300 hover:text-white uppercase font-bold tracking-wider cursor-pointer transition-colors"
               >
@@ -315,6 +366,6 @@ export default function LoginPage() {
         )}
 
       </div>
-    </main>
+    </div>
   );
 }

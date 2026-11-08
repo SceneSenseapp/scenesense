@@ -1,13 +1,24 @@
-// components/profile/ReviewsTab.jsx
+// File: components/profile/ReviewsTab.jsx
 import { useState } from 'react';
 import Image from 'next/image';
 import { collection, addDoc, doc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase';
+import { trackQuestEvent } from '@/lib/quest-tracker';
 
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
+const VERDICT_TAGS = [
+  'Certified Masterpiece',
+  'Visual Spectacle',
+  'Mind-Bender',
+  'Hidden Gem',
+  'Slow Burn',
+  'Skip It',
+];
 
 export default function ReviewsTab({ user, reviews, showToast }) {
   const [reviewInput, setReviewInput] = useState('');
+  const [rating, setRating] = useState(5);
+  const [reviewTag, setReviewTag] = useState('Certified Masterpiece');
+  const [isSpoiler, setIsSpoiler] = useState(false);
   const [isPublic, setIsPublic] = useState(true);
   const [reviewSearchQuery, setReviewSearchQuery] = useState('');
   const [reviewSearchResults, setReviewSearchResults] = useState([]);
@@ -20,7 +31,7 @@ export default function ReviewsTab({ user, reviews, showToast }) {
     
     setIsSearchingMovie(true);
     try {
-      const res = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(reviewSearchQuery)}`);
+      const res = await fetch(`/api/tmdb?endpoint=search/movie&query=${encodeURIComponent(reviewSearchQuery)}`);
       const data = await res.json();
       setReviewSearchResults(data.results?.slice(0, 5) || []);
     } catch (err) {
@@ -34,28 +45,39 @@ export default function ReviewsTab({ user, reviews, showToast }) {
   const submitReview = async (e) => {
     e.preventDefault();
     if (!reviewInput.trim() || !user || !selectedReviewMovie) {
-       showToast("Select a target and input transmission.", "error");
-       return;
+      showToast("Select a target and input transmission.", "error");
+      return;
     }
     
     try {
       await addDoc(collection(db, 'reviews'), {
         userId: user.uid,
-        authorName: user.displayName || 'Unknown Operative',
+        authorName: user.displayName || 'Operative',
+        userName: user.displayName || 'Operative',
         text: reviewInput.trim(),
-        isPublic: isPublic,
+        reviewText: reviewInput.trim(),
+        rating: Number(rating) || 5,
+        reviewTag,
+        isSpoiler,
+        isPublic,
         movieId: selectedReviewMovie.id,
+        targetId: String(selectedReviewMovie.id),
         movieTitle: selectedReviewMovie.title,
+        targetTitle: selectedReviewMovie.title,
         moviePoster: selectedReviewMovie.poster_path,
+        posterPath: selectedReviewMovie.poster_path,
         createdAt: serverTimestamp()
       });
+
+      trackQuestEvent(user.uid, ['file_review_2', 'week_screen_12'], 1);
       
       setReviewInput('');
       setSelectedReviewMovie(null);
       setReviewSearchQuery('');
       setReviewSearchResults([]);
+      setIsSpoiler(false);
       
-      showToast("Critique broadcast to archives.", "success");
+      showToast("Critique broadcast to archives!", "success");
     } catch (error) {
       console.error("Failed to broadcast review:", error);
       showToast("Log deployment failed.", "error");
@@ -139,24 +161,73 @@ export default function ReviewsTab({ user, reviews, showToast }) {
              </button>
            </div>
 
+           {/* Rating & Verdict Tag Selector */}
+           <div className="flex flex-wrap items-center justify-between gap-4">
+             <div className="flex items-center gap-1.5">
+               <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400 mr-1">Rating:</span>
+               {[1, 2, 3, 4, 5].map((star) => (
+                 <button
+                   key={star}
+                   type="button"
+                   onClick={() => setRating(star)}
+                   className={`text-lg transition-transform hover:scale-110 cursor-pointer ${
+                     star <= rating ? 'text-amber-400' : 'text-gray-700'
+                   }`}
+                 >
+                   ★
+                 </button>
+               ))}
+             </div>
+
+             <div className="flex flex-wrap gap-1.5">
+               {VERDICT_TAGS.map((tag) => (
+                 <button
+                   key={tag}
+                   type="button"
+                   onClick={() => setReviewTag(tag)}
+                   className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold uppercase border transition-all cursor-pointer ${
+                     reviewTag === tag
+                       ? 'bg-cyan-500 text-black border-cyan-300'
+                       : 'bg-black/60 text-gray-400 border-white/10 hover:text-white'
+                   }`}
+                 >
+                   {tag}
+                 </button>
+               ))}
+             </div>
+           </div>
+
            <textarea 
              value={reviewInput}
              onChange={(e) => setReviewInput(e.target.value)}
              placeholder="Input review transmission here (cinematography, narrative pacing, atmospheric score)..."
              className="w-full bg-black text-xs sm:text-sm text-gray-200 placeholder-gray-600 border border-cyan-500/30 rounded-xl p-4 min-h-[140px] focus:outline-none focus:border-cyan-400 transition-colors resize-none shadow-inner"
            />
-           <div className="flex items-center justify-between pt-2">
-             <label className="flex items-center gap-2 cursor-pointer group">
-               <input 
-                 type="checkbox" 
-                 checked={isPublic}
-                 onChange={(e) => setIsPublic(e.target.checked)}
-                 className="accent-cyan-500 w-4 h-4 cursor-pointer"
-               />
-               <span className="text-xs font-bold text-gray-300 uppercase tracking-wider group-hover:text-white transition-colors">
-                 Make Broadcast Public
-               </span>
-             </label>
+           <div className="flex items-center justify-between pt-2 flex-wrap gap-3">
+             <div className="flex items-center gap-4">
+               <label className="flex items-center gap-2 cursor-pointer group">
+                 <input 
+                   type="checkbox" 
+                   checked={isPublic}
+                   onChange={(e) => setIsPublic(e.target.checked)}
+                   className="accent-cyan-500 w-4 h-4 cursor-pointer"
+                 />
+                 <span className="text-xs font-bold text-gray-300 uppercase tracking-wider group-hover:text-white transition-colors">
+                   Public Broadcast
+                 </span>
+               </label>
+               <label className="flex items-center gap-2 cursor-pointer group">
+                 <input 
+                   type="checkbox" 
+                   checked={isSpoiler}
+                   onChange={(e) => setIsSpoiler(e.target.checked)}
+                   className="accent-rose-500 w-4 h-4 cursor-pointer"
+                 />
+                 <span className="text-xs font-bold text-rose-300 uppercase tracking-wider group-hover:text-white transition-colors">
+                   ⚠️ Contains Spoilers
+                 </span>
+               </label>
+             </div>
              <button 
                type="submit" 
                disabled={!reviewInput.trim()}
@@ -177,14 +248,28 @@ export default function ReviewsTab({ user, reviews, showToast }) {
              <div key={review.id} className="bg-black/60 border border-cyan-500/20 hover:border-cyan-400/50 rounded-2xl p-6 flex flex-col gap-4 group relative shadow-lg transition-all">
                <div className="flex justify-between items-start gap-4">
                  <div className="flex gap-4 flex-1">
-                   {review.moviePoster && (
+                   {(review.moviePoster || review.posterPath) && (
                      <div className="relative w-14 h-20 rounded-xl overflow-hidden border border-cyan-500/30 hidden sm:block shadow-md flex-shrink-0">
-                       <Image src={`https://image.tmdb.org/t/p/w92${review.moviePoster}`} alt={review.movieTitle} fill unoptimized sizes="56px" className="object-cover" />
+                       <Image src={`https://image.tmdb.org/t/p/w92${review.moviePoster || review.posterPath}`} alt={review.movieTitle || review.targetTitle || 'Poster'} fill unoptimized sizes="56px" className="object-cover" />
                      </div>
                    )}
                    <div className="space-y-1.5 flex-1 min-w-0">
-                     {review.movieTitle && <h4 className="text-xs font-black text-cyan-300 uppercase tracking-widest">{review.movieTitle}</h4>}
-                     <p className="text-xs sm:text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">{review.text}</p>
+                     <div className="flex items-center gap-2 flex-wrap">
+                       {(review.movieTitle || review.targetTitle) && (
+                         <h4 className="text-xs font-black text-cyan-300 uppercase tracking-widest">
+                           {review.movieTitle || review.targetTitle}
+                         </h4>
+                       )}
+                       {review.rating && (
+                         <span className="text-xs font-mono font-bold text-amber-400">★ {review.rating}/5</span>
+                       )}
+                       {review.reviewTag && (
+                         <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[9px] font-mono font-bold text-cyan-300 uppercase">
+                           {review.reviewTag}
+                         </span>
+                       )}
+                     </div>
+                     <p className="text-xs sm:text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">{review.text || review.reviewText}</p>
                    </div>
                  </div>
                  <button
@@ -196,8 +281,8 @@ export default function ReviewsTab({ user, reviews, showToast }) {
                  </button>
                </div>
                <div className="flex items-center gap-3 pt-3 border-t border-cyan-500/10">
-                 <span className={`text-[9px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg ${review.isPublic ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-500/30' : 'bg-amber-950/60 text-amber-400 border border-amber-500/30'}`}>
-                   {review.isPublic ? '🌐 Public Broadcast' : '🔒 Private Cache'}
+                 <span className={`text-[9px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg ${review.isPublic !== false ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-500/30' : 'bg-amber-950/60 text-amber-400 border border-amber-500/30'}`}>
+                   {review.isPublic !== false ? '🌐 Public Broadcast' : '🔒 Private Cache'}
                  </span>
                  <span className="text-[10px] text-gray-500 font-mono">{review.date}</span>
                </div>

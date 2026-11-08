@@ -2,10 +2,19 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(req) {
   try {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) {
+      return NextResponse.json(
+        { error: 'Stripe gateway offline: STRIPE_SECRET_KEY is not configured.' },
+        { status: 503 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const { priceId, userId, userEmail } = body;
 
@@ -26,7 +35,17 @@ export async function POST(req) {
       );
     }
 
-    const origin = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    let origin = req.headers.get('origin');
+    if (!origin && req.headers.get('referer')) {
+      try {
+        origin = new URL(req.headers.get('referer')).origin;
+      } catch {
+        origin = null;
+      }
+    }
+    origin = origin || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+    const stripe = new Stripe(stripeKey);
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',

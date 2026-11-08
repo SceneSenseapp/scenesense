@@ -1,4 +1,4 @@
-// components/profile/WalletTab.jsx
+// File: components/profile/WalletTab.jsx
 "use client";
 
 import { useState } from 'react';
@@ -16,10 +16,12 @@ export default function WalletTab({ user, userWalletBalance, userXp, setUserWall
     try {
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
-        walletBalance: increment(amount)
+        walletBalance: increment(amount),
+        coins: increment(amount),
+        tokens: increment(amount),
       });
       setUserWalletBalance(prev => prev + amount);
-      showToast(`Successfully secured ${amount} Studio Tokens! 🪙`, "success");
+      showToast(`Successfully secured ${amount} SceneCents! 🪙`, "success");
     } catch (error) {
       console.error("Top up failed:", error);
       showToast("Token top-up transmission failed.", "error");
@@ -29,37 +31,47 @@ export default function WalletTab({ user, userWalletBalance, userXp, setUserWall
   };
 
   const mockTransactions = [
-    { id: 1, type: 'Tip Sent', amount: -10, recipient: 'Operative #8824', date: '2026-10-01' },
-    { id: 2, type: 'Vault License', amount: -10, item: 'Scene_4_Storyboard.pdf', date: '2026-09-30' },
-    { id: 3, type: 'Top-Up', amount: +50, item: 'Studio Token Pack', date: '2026-09-28' },
-    { id: 4, type: 'Tip Received', amount: +10, sender: 'Operative #1042', date: '2026-09-25' }
+    { id: 1, type: 'Daily Quest Claim', amount: +60, recipient: 'Cinema Cipher Solved', date: '2026-10-31' },
+    { id: 2, type: 'Critique Filed', amount: +25, item: 'Community Review Bonus', date: '2026-10-30' },
+    { id: 3, type: 'Top-Up', amount: +50, item: 'Studio Token Pack', date: '2026-10-28' },
+    { id: 4, type: 'Tip Received', amount: +10, sender: 'Operative #1042', date: '2026-10-25' }
   ];
 
   return (
     <div className="p-8 bg-[#0f0f0f]/90 min-h-[450px] text-white flex flex-col gap-6">
       
-      {/* Header with Direct Arcade Portal */}
+      {/* Header with Direct Quests & Prop Dept Portals */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between pb-6 border-b border-white/5 gap-4">
         <div>
-          <h2 className="text-sm font-black uppercase tracking-widest text-amber-400">Studio Token Treasury & Ledger</h2>
-          <p className="text-xs text-gray-400 mt-1">Manage your utility currency, micro-tips, and digital asset licenses.</p>
+          <h2 className="text-sm font-black uppercase tracking-widest text-amber-400">Studio Token Treasury &amp; Ledger</h2>
+          <p className="text-xs text-gray-400 mt-1">Manage your SceneCents utility currency, daily quest rewards, and Prop Dept cosmetics.</p>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
           <button 
-            onClick={() => router.push('/arcade')}
-            className="px-5 py-3 bg-gradient-to-r from-amber-600 to-indigo-600 hover:brightness-110 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-[0_0_20px_rgba(245,158,11,0.3)] cursor-pointer transition-all"
+            type="button"
+            onClick={() => router.push('/quests')}
+            className="px-4 py-3 bg-gradient-to-r from-amber-600 to-indigo-600 hover:brightness-110 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-[0_0_20px_rgba(245,158,11,0.3)] cursor-pointer transition-all"
           >
-            🎰 Enter Studio Arcade (Trivia Wagers)
+            🎯 Daily Quests &amp; Cipher
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => router.push('/armoury')}
+            className="px-4 py-3 bg-cyan-950/60 hover:bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer transition-all"
+          >
+            🛍️ Prop Dept
           </button>
 
           <div className="flex items-center gap-3 bg-black/60 px-5 py-3 rounded-2xl border border-white/10">
             <span className="text-2xl">🪙</span>
             <div>
               <span className="text-[10px] text-gray-400 uppercase font-mono block">Current Balance</span>
-              <span className="text-lg font-black font-mono text-white">{userWalletBalance} TOKENS</span>
+              <span className="text-lg font-black font-mono text-white">{userWalletBalance} SCENECENTS</span>
             </div>
             <button 
+              type="button"
               disabled={isToptingUp}
               onClick={() => handleTopUp(50)}
               className="ml-4 px-3.5 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md"
@@ -74,9 +86,9 @@ export default function WalletTab({ user, userWalletBalance, userXp, setUserWall
         <div className="bg-[#141414] border border-white/5 rounded-2xl p-6 flex flex-col gap-4">
           <h3 className="text-xs font-black uppercase tracking-wider text-gray-300">Economic Utility Overview</h3>
           <ul className="text-xs text-gray-400 space-y-2.5 font-light">
-            <li>• Use tokens to tip high-value contributors across studio channels (10 🪙 / tip).</li>
-            <li>• Wager tokens in the Studio Arcade Movie Trivia Colosseum to multiply reserves.</li>
-            <li>• License raw stems, storyboards, and audio packs from the P2P File Vault.</li>
+            <li>• Earn SceneCents by completing Daily Quests, solving the Cinema Cipher (+60 🪙), and filing film critiques (+25 🪙).</li>
+            <li>• Spend SceneCents in the Prop Department (`/armoury`) on Neon Avatar Frames, Prestige Titles, and Studio LUT Color Grade Themes.</li>
+            <li>• Climb the global Studio Leaderboards (`/leaderboards`) and pledge your XP to a Cinema Faction.</li>
           </ul>
         </div>
 
@@ -89,7 +101,7 @@ export default function WalletTab({ user, userWalletBalance, userXp, setUserWall
           <div className="w-full bg-black rounded-full h-2 overflow-hidden border border-white/10">
             <div className="bg-gradient-to-r from-red-600 to-amber-500 h-full rounded-full" style={{ width: `${Math.min((userXp / 500) * 100, 100)}%` }}></div>
           </div>
-          <p className="text-[10px] text-gray-500 italic">Participate in polls, create channels, and send transmissions to rank up.</p>
+          <p className="text-[10px] text-gray-500 italic">Complete daily quests, file reviews, and decrypt daily ciphers to rank up.</p>
         </div>
       </div>
 

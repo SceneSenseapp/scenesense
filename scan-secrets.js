@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const SECRET_PATTERNS = [
   /AIzaSy[0-9A-Za-z_-]{33}/g, // Google API Key pattern

@@ -22,8 +22,15 @@ import {
 import { auth, db } from '@/firebase';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import MovieModal from '@/components/MovieModal';
-
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "e2b0c95a0bc07e997f769f3d9b4b0db3";
+import TVModal from '@/components/TVModal';
+import {
+  FIFTY_TIERS_DATA,
+  REWARD_VISUAL_CATALOG,
+  CAREER_MASTERY_CAMPAIGNS,
+  RewardPictureCard,
+  formatDirectorTitle,
+} from '@/lib/reward-visuals';
+import SceneCentsArena from '@/components/SceneCentsArena';
 
 // 40 Strictly Unique Studio & Character Avatars using Stable DiceBear Endpoints
 const AVATAR_PRESETS = [
@@ -74,16 +81,20 @@ const AVATAR_PRESETS = [
 
 export default function ProfileDashboardPage() {
   const [user, setUser] = useState(null);
-  const { watchlist } = useWatchlist();
+  const { watchlist, saveToWatchlist, removeFromWatchlist } = useWatchlist();
   
   const [profileData, setProfileData] = useState({
-    displayName: 'Mathew Scott',
+    displayName: 'Operative',
+    avatarUrl: '',
     role: 'Head of Production',
     clearance: 'Level 4 Director',
     walletCoins: 100,
+    userXp: 320,
+    faction: 'Sci-Fi Masterminds',
     inventory: [],
     equippedFrame: null,
     equippedTitle: null,
+    equippedTheme: null,
     claimedBounties: []
   });
 
@@ -102,39 +113,45 @@ export default function ProfileDashboardPage() {
   // Watched state count from local and remote synchronization
   const [watchedCount, setWatchedCount] = useState(0);
 
-  // Modal State
-  const [selectedMovieId, setSelectedMovieId] = useState(null);
+  // Unified Dual-Modal Target State
+  const [selectedMedia, setSelectedMedia] = useState(null);
 
   const router = useRouter();
 
-  // Watchlist recommendations fetcher
+  // Multi-Format Watchlist Recommendations Engine (Movie + TV series compliant)
   const fetchPersonalizedRecommendations = useCallback(async (savedItems = []) => {
     setIsLoadingRecs(true);
     try {
       if (savedItems.length > 0) {
-        const shuffled = [...savedItems].sort(() => 0.5 - Math.random()).slice(0, 3);
+        const shuffled = [...savedItems].sort(() => 0.5 - Math.random()).slice(0, 4);
         const aggregatedRecs = [];
 
         for (const item of shuffled) {
-          const movieId = item.id || item.movieId;
-          if (!movieId) continue;
+          const mediaId = item.id || item.movieId;
+          if (!mediaId) continue;
+
+          const isTv = item.media_type === 'tv' || Boolean(item.name && !item.title);
+          const endpointType = isTv ? 'tv' : 'movie';
 
           try {
             const res = await fetch(
-              `https://api.themoviedb.org/3/movie/${movieId}/recommendations?api_key=${TMDB_API_KEY}&language=en-US&page=1`
+              `/api/tmdb?endpoint=${endpointType}/${mediaId}/recommendations&language=en-US&page=1`
             );
             if (res.ok) {
               const data = await res.json();
               if (data.results && data.results.length > 0) {
-                data.results.slice(0, 3).forEach(movie => {
-                  if (movie.poster_path && !aggregatedRecs.some(r => r.id === movie.id)) {
+                data.results.slice(0, 3).forEach(media => {
+                  if (media.poster_path && !aggregatedRecs.some(r => String(r.id) === String(media.id))) {
                     aggregatedRecs.push({
-                      id: movie.id,
-                      title: movie.title,
-                      year: (movie.release_date || '').slice(0, 4) || 'N/A',
-                      posterPath: movie.poster_path,
-                      status: `Based on your Watchlist: ${item.title || item.name || 'Saved Title'}`,
-                      match: `${Math.min(99, Math.floor((movie.vote_average || 7) * 10) + 12)}%`
+                      id: media.id,
+                      title: media.title || media.name,
+                      year: (media.release_date || media.first_air_date || '').slice(0, 4) || 'N/A',
+                      posterPath: media.poster_path,
+                      media_type: isTv ? 'tv' : 'movie',
+                      vote_average: media.vote_average || 7.5,
+                      overview: media.overview || '',
+                      status: `From Watchlist: ${item.title || item.name || 'Saved Title'}`,
+                      match: `${Math.min(99, Math.floor((media.vote_average || 7) * 10) + 12)}%`
                     });
                   }
                 });
@@ -152,16 +169,20 @@ export default function ProfileDashboardPage() {
         }
       }
 
+      // High-affinity Fallback
       const fallbackRes = await fetch(
-        `https://api.themoviedb.org/3/movie/top_rated?api_key=${TMDB_API_KEY}&language=en-US&page=1`
+        `/api/tmdb?endpoint=movie/top_rated&language=en-US&page=1`
       );
       if (fallbackRes.ok) {
         const fallbackData = await fallbackRes.json();
         const fallbackRecs = (fallbackData.results || []).slice(0, 8).map(m => ({
           id: m.id,
-          title: m.title,
-          year: (m.release_date || '').slice(0, 4),
+          title: m.title || m.name,
+          year: (m.release_date || m.first_air_date || '').slice(0, 4),
           posterPath: m.poster_path,
+          media_type: 'movie',
+          vote_average: m.vote_average || 8.0,
+          overview: m.overview || '',
           status: 'Studio Premieres',
           match: `${Math.floor((m.vote_average || 7.5) * 10)}%`
         }));
@@ -190,22 +211,28 @@ export default function ProfileDashboardPage() {
               const data = userDoc.data();
               setProfileData(prev => ({
                 ...prev,
-                displayName: data.displayName || currentUser.displayName || 'Mathew Scott',
-                walletCoins: typeof data.coins === 'number' ? data.coins : 100,
+                displayName: data.displayName || currentUser.displayName || currentUser.email?.split('@')[0] || 'Operative',
+                avatarUrl: data.avatarUrl || data.photoURL || currentUser.photoURL || '',
+                walletCoins: typeof data.coins === 'number' ? data.coins : (typeof data.tokens === 'number' ? data.tokens : (typeof data.walletBalance === 'number' ? data.walletBalance : 150)),
+                userXp: typeof data.xp === 'number' ? data.xp : 320,
+                faction: data.faction || 'Sci-Fi Masterminds',
                 inventory: Array.isArray(data.inventory) ? data.inventory : [],
                 equippedFrame: data.equippedFrame || null,
                 equippedTitle: data.equippedTitle || null,
+                equippedTheme: data.equippedTheme || null,
                 claimedBounties: Array.isArray(data.claimedBounties) ? data.claimedBounties : []
               }));
             } else {
-              // Self-healing initialization on first sign-in
               const initialData = {
-                displayName: currentUser.displayName || 'Mathew Scott',
+                displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Operative',
                 email: currentUser.email || '',
                 coins: 100,
+                xp: 320,
+                faction: 'Sci-Fi Masterminds',
                 inventory: [],
                 equippedFrame: null,
                 equippedTitle: null,
+                equippedTheme: null,
                 claimedBounties: [],
                 createdAt: serverTimestamp()
               };
@@ -243,26 +270,48 @@ export default function ProfileDashboardPage() {
   }, [router]);
 
   useEffect(() => {
-    fetchPersonalizedRecommendations(watchlist || []);
+    const frame = requestAnimationFrame(() => {
+      fetchPersonalizedRecommendations(watchlist || []);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [watchlist, fetchPersonalizedRecommendations]);
 
   // Read watched state from storage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('scenesense_watched_map');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setWatchedCount(Object.values(parsed).filter(Boolean).length);
+    const frame = requestAnimationFrame(() => {
+      try {
+        const saved = localStorage.getItem('scenesense_watched_map');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setWatchedCount(Object.values(parsed).filter(Boolean).length);
+        }
+      } catch (e) {
+        console.warn("Error reading watched map:", e);
       }
-    } catch (e) {
-      console.warn("Error reading watched map:", e);
-    }
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const savedTitlesCount = (watchlist || []).length;
   const reviewsCount = userReviews.length;
 
-  // Real-time Objectives
+  // Compute current 50-Tier Orbital Pass standing
+  const currentTierIndex = useMemo(() => {
+    let tier = 1;
+    for (let i = 0; i < FIFTY_TIERS_DATA.length; i++) {
+      if (profileData.userXp >= FIFTY_TIERS_DATA[i].requiredXp) {
+        tier = FIFTY_TIERS_DATA[i].tier;
+      } else {
+        break;
+      }
+    }
+    return tier;
+  }, [profileData.userXp]);
+
+  const currentTierObj = FIFTY_TIERS_DATA[currentTierIndex - 1] || FIFTY_TIERS_DATA[0];
+  const nextTierObj = FIFTY_TIERS_DATA[currentTierIndex] || FIFTY_TIERS_DATA[FIFTY_TIERS_DATA.length - 1];
+
+  // Real-time Objectives with Reward Pictures & XP
   const objectives = useMemo(() => [
     {
       id: 'curate_watchlist',
@@ -270,8 +319,10 @@ export default function ProfileDashboardPage() {
       description: 'Explore the film catalog and save at least 5 titles to your active watchlist.',
       goal: 5,
       current: savedTitlesCount,
-      reward: 35,
-      icon: '📋'
+      reward: 50,
+      rewardXp: 200,
+      icon: '📋',
+      image: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=400&q=80'
     },
     {
       id: 'screening_log',
@@ -279,8 +330,10 @@ export default function ProfileDashboardPage() {
       description: 'Confirm completed film viewings by toggling 3 titles as watched in your watchlist.',
       goal: 3,
       current: watchedCount,
-      reward: 50,
-      icon: '🎞️'
+      reward: 75,
+      rewardXp: 300,
+      icon: '🎞️',
+      image: 'https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=400&q=80'
     },
     {
       id: 'lead_critic',
@@ -288,8 +341,21 @@ export default function ProfileDashboardPage() {
       description: 'Draft and file a verified critique in Global Reviews to earn your production stipend.',
       goal: 1,
       current: reviewsCount,
-      reward: 75,
-      icon: '✍️'
+      reward: 100,
+      rewardXp: 350,
+      icon: '✍️',
+      image: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=400&q=80'
+    },
+    {
+      id: 'archival_vault_25',
+      title: 'Senior Archivist: 25 Watchlist Acquisitions',
+      description: 'Expand your studio screening queue to 25 saved films or series.',
+      goal: 25,
+      current: savedTitlesCount,
+      reward: 250,
+      rewardXp: 850,
+      icon: '🗄️',
+      image: 'https://images.unsplash.com/photo-1513106580091-1d82408b8cd6?auto=format&fit=crop&w=400&q=80'
     }
   ], [savedTitlesCount, watchedCount, reviewsCount]);
 
@@ -301,11 +367,12 @@ export default function ProfileDashboardPage() {
     try {
       const updatedClaims = [...profileData.claimedBounties, obj.id];
       const newBalance = profileData.walletCoins + obj.reward;
+      const addedXp = obj.rewardXp || 150;
 
-      // Optimistic state update
       setProfileData(prev => ({
         ...prev,
         walletCoins: newBalance,
+        userXp: prev.userXp + addedXp,
         claimedBounties: updatedClaims
       }));
 
@@ -313,12 +380,12 @@ export default function ProfileDashboardPage() {
         const userRef = doc(db, 'users', user.uid);
         await updateDoc(userRef, {
           coins: increment(obj.reward),
+          xp: increment(addedXp),
           claimedBounties: updatedClaims
         });
       }
     } catch (err) {
       console.error("Failed to claim objective reward:", err);
-      // Rollback on failure
       setProfileData(prev => ({
         ...prev,
         walletCoins: prev.walletCoins - obj.reward,
@@ -329,7 +396,7 @@ export default function ProfileDashboardPage() {
     }
   };
 
-  // Toggle Equipment Function (Frame or Title)
+  // Toggle Equipment Function (Frame, Title, or LUT Theme)
   const handleToggleEquip = async (itemId, type) => {
     if (!user) return;
     const isCurrentlyEquipped = profileData[type] === itemId;
@@ -348,23 +415,49 @@ export default function ProfileDashboardPage() {
     }
   };
 
-  // Handler for Updating Avatar (Presets, Custom URL, or Local File)
+  // Quick Watchlist Toggle from Recommendation Card
+  const handleToggleWatchlistCard = (target, e) => {
+    e.stopPropagation();
+    const isSaved = (watchlist || []).some(w => String(w.id) === String(target.id));
+    if (isSaved) {
+      removeFromWatchlist(target.id);
+    } else {
+      saveToWatchlist({
+        id: target.id,
+        title: target.title,
+        name: target.title,
+        poster_path: target.posterPath,
+        media_type: target.media_type || 'movie',
+        release_date: target.year ? `${target.year}-01-01` : 'N/A',
+        vote_average: target.vote_average || 8.0,
+        overview: target.overview || ''
+      });
+    }
+  };
+
+  // Handler for Updating Avatar (Presets, Custom URL, or Compressed Local File)
   const handleApplyAvatar = async (imageUrl) => {
-    if (!imageUrl || !imageUrl.trim() || !auth?.currentUser) return;
+    const trimmed = (imageUrl || '').trim();
+    if (!trimmed || !auth?.currentUser) return;
     setIsUpdatingAvatar(true);
 
     try {
-      await updateProfile(auth.currentUser, {
-        photoURL: imageUrl.trim()
-      });
+      const isDataUri = trimmed.startsWith('data:');
+      if (!isDataUri && trimmed.length <= 2000) {
+        await updateProfile(auth.currentUser, {
+          photoURL: trimmed
+        });
+      }
 
       if (db) {
         const userRef = doc(db, 'users', auth.currentUser.uid);
         await updateDoc(userRef, {
-          photoURL: imageUrl.trim()
+          avatarUrl: trimmed,
+          photoURL: trimmed
         });
       }
 
+      setProfileData(prev => ({ ...prev, avatarUrl: trimmed }));
       setUser({ ...auth.currentUser });
       setCustomAvatarUrl('');
       setIsAvatarModalOpen(false);
@@ -376,37 +469,52 @@ export default function ProfileDashboardPage() {
     }
   };
 
-  // Handler for Local Device File Selection
+  // Handler for Local Device File Selection (Resizes & Compresses to <= 160x160 JPEG)
   const handleLocalFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert("File size exceeds 2MB limit. Please choose a smaller image.");
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File size exceeds 5MB limit. Please choose a smaller image.");
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64String = event.target?.result;
-      if (base64String) {
-        await handleApplyAvatar(base64String);
-      }
+    reader.onload = (event) => {
+      const rawDataUrl = event.target?.result;
+      if (typeof rawDataUrl !== 'string') return;
+
+      const img = new window.Image();
+      img.onload = async () => {
+        const maxDim = 160;
+        let width = img.width || maxDim;
+        let height = img.height || maxDim;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height >= width && height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          await handleApplyAvatar(compressedDataUrl);
+        } else {
+          await handleApplyAvatar(rawDataUrl);
+        }
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };
 
   // Format screen credit title
-  const getDisplayTitleLabel = (titleId) => {
-    switch (titleId) {
-      case 'title_shadow_operative':
-        return 'EXECUTIVE PRODUCER';
-      case 'title_archivist':
-        return 'CHIEF ARCHIVIST';
-      default:
-        return 'DIRECTOR';
-    }
-  };
+  const getDisplayTitleLabel = (titleId) => formatDirectorTitle(titleId);
 
   if (!user && isLoading) {
     return (
@@ -437,7 +545,11 @@ export default function ProfileDashboardPage() {
                     ? 'bg-gradient-to-tr from-amber-500 via-yellow-300 to-amber-600 opacity-80 animate-pulse'
                     : profileData.equippedFrame === 'frame_neon_cyan'
                       ? 'bg-gradient-to-tr from-cyan-400 via-sky-300 to-indigo-500 opacity-90 animate-pulse'
-                      : 'bg-cyan-500/20 opacity-0 group-hover:opacity-60'
+                      : profileData.equippedFrame === 'frame_quantum_amethyst'
+                        ? 'bg-gradient-to-tr from-violet-500 via-fuchsia-400 to-pink-500 opacity-90 animate-pulse'
+                        : profileData.equippedFrame === 'frame_matrix_emerald'
+                          ? 'bg-gradient-to-tr from-emerald-500 via-green-300 to-teal-500 opacity-90 animate-pulse'
+                          : 'bg-cyan-500/20 opacity-0 group-hover:opacity-60'
                 }`} 
               />
 
@@ -447,11 +559,15 @@ export default function ProfileDashboardPage() {
                     ? 'border-2 border-amber-300 shadow-[0_0_30px_rgba(251,191,36,0.7)] ring-2 ring-amber-400/50'
                     : profileData.equippedFrame === 'frame_neon_cyan'
                       ? 'border-2 border-cyan-300 shadow-[0_0_30px_rgba(6,182,212,0.8)] ring-2 ring-cyan-400/60'
-                      : 'border-2 border-white/20 group-hover:border-cyan-400'
+                      : profileData.equippedFrame === 'frame_quantum_amethyst'
+                        ? 'border-2 border-fuchsia-300 shadow-[0_0_30px_rgba(217,70,239,0.8)] ring-2 ring-fuchsia-400/60'
+                        : profileData.equippedFrame === 'frame_matrix_emerald'
+                          ? 'border-2 border-emerald-300 shadow-[0_0_30px_rgba(52,211,153,0.8)] ring-2 ring-emerald-400/60'
+                          : 'border-2 border-white/20 group-hover:border-cyan-400'
                 }`}
               >
                 <Image
-                  src={user?.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250"}
+                  src={profileData.avatarUrl || user?.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250"}
                   alt="Director Avatar"
                   fill
                   unoptimized
@@ -469,7 +585,9 @@ export default function ProfileDashboardPage() {
                       ? 'bg-amber-400 shadow-[0_0_10px_#fbbf24]'
                       : profileData.equippedFrame === 'frame_neon_cyan'
                         ? 'bg-cyan-400 shadow-[0_0_10px_#22d3ee]'
-                        : 'bg-emerald-400 shadow-[0_0_10px_#10b981]'
+                        : profileData.equippedFrame === 'frame_quantum_amethyst'
+                          ? 'bg-fuchsia-400 shadow-[0_0_10px_#f0abfc]'
+                          : 'bg-emerald-400 shadow-[0_0_10px_#10b981]'
                   }`} 
                 />
               </div>
@@ -491,10 +609,12 @@ export default function ProfileDashboardPage() {
                   </span>
                 )}
               </div>
-              <p className="text-xs font-mono text-slate-400 flex items-center gap-2">
-                <span>Studio: London, ON</span>
+              <p className="text-xs font-mono text-slate-400 flex items-center gap-2 flex-wrap">
+                <span>Faction: {profileData.faction}</span>
                 <span>•</span>
-                <span className="text-emerald-400">{profileData.clearance}</span>
+                <span className="text-emerald-400">{profileData.userXp.toLocaleString()} XP</span>
+                <span>•</span>
+                <span className="text-cyan-400">{watchedCount} Screened</span>
               </p>
               <p className="text-[11px] text-slate-400 italic">
                 Directing orbital cinema feeds, screenings, and personal watchlists. Click your avatar to edit.
@@ -523,12 +643,15 @@ export default function ProfileDashboardPage() {
               </span>
             </Link>
 
-            <div className="bg-[#080d1a] border border-cyan-500/20 px-4 py-2.5 rounded-2xl text-center col-span-2 sm:col-span-1 shadow-inner">
+            <Link
+              href="/leaderboards"
+              className="bg-[#080d1a] border border-cyan-500/20 hover:border-violet-400 px-4 py-2.5 rounded-2xl text-center col-span-2 sm:col-span-1 shadow-inner transition-colors"
+            >
               <span className="text-[10px] font-mono uppercase text-slate-400 block">Dispatches Logged</span>
               <span className="text-lg font-black text-indigo-300 font-mono">
                 {userReviews.length}
               </span>
-            </div>
+            </Link>
           </div>
 
         </div>
@@ -590,7 +713,7 @@ export default function ProfileDashboardPage() {
                     className="group relative flex flex-col items-center p-3 bg-[#080d1a] hover:bg-cyan-950/40 border border-cyan-500/20 hover:border-cyan-400 rounded-2xl transition-all cursor-pointer"
                   >
                     <div className="relative w-14 h-14 rounded-xl overflow-hidden mb-2 border border-cyan-500/30 group-hover:scale-105 transition-transform bg-zinc-900 shrink-0 flex items-center justify-center p-1">
-                      <img src={preset.url} alt={preset.label} className="w-full h-full object-contain" />
+                      <Image src={preset.url} alt={preset.label} width={48} height={48} unoptimized className="w-full h-full object-contain" />
                     </div>
                     <span className="text-[10px] font-mono font-bold text-slate-300 text-center truncate w-full">
                       {preset.label}
@@ -668,35 +791,47 @@ export default function ProfileDashboardPage() {
                   >
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                       
-                      <div className="flex-1 space-y-2 w-full">
-                        <div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-white flex items-center gap-2">
-                              <span>{obj.icon}</span>
-                              <span>{obj.title}</span>
-                            </span>
-                            <span className="font-mono text-[10px] text-slate-400">
-                              {obj.current} / {obj.goal} ({progressPct}%)
-                            </span>
+                      <div className="flex items-start gap-3 flex-1 w-full">
+                        {obj.image && (
+                          <Image
+                            src={obj.image}
+                            alt={obj.title}
+                            width={56}
+                            height={56}
+                            unoptimized
+                            className="w-14 h-14 rounded-xl object-cover border border-cyan-500/30 shrink-0 hidden sm:block"
+                          />
+                        )}
+                        <div className="flex-1 space-y-2 w-full">
+                          <div>
+                            <div className="flex items-center justify-between text-xs flex-wrap gap-1">
+                              <span className="font-bold text-white flex items-center gap-2">
+                                <span>{obj.icon}</span>
+                                <span>{obj.title}</span>
+                              </span>
+                              <span className="font-mono text-[10px] text-amber-300">
+                                +{obj.reward} 🪙 • +{obj.rewardXp || 200} XP ({obj.current}/{obj.goal})
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400 font-light mt-0.5 leading-snug">
+                              {obj.description}
+                            </p>
                           </div>
 
-                          <p className="text-[11px] text-slate-400 font-light mt-0.5 leading-snug">
-                            {obj.description}
-                          </p>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="h-1.5 w-full bg-black/70 rounded-full overflow-hidden border border-white/5">
-                          <div 
-                            className={`h-full transition-all duration-500 ${
-                              isClaimed 
-                                ? 'bg-emerald-500' 
-                                : isReady 
-                                  ? 'bg-gradient-to-r from-amber-400 to-amber-500' 
-                                  : 'bg-cyan-500'
-                            }`}
-                            style={{ width: `${progressPct}%` }}
-                          />
+                          {/* Progress Bar */}
+                          <div className="h-1.5 w-full bg-black/70 rounded-full overflow-hidden border border-white/5">
+                            <div 
+                              className={`h-full transition-all duration-500 ${
+                                isClaimed 
+                                  ? 'bg-emerald-500' 
+                                  : isReady 
+                                    ? 'bg-gradient-to-r from-amber-400 to-amber-500' 
+                                    : 'bg-cyan-500'
+                              }`}
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -730,27 +865,43 @@ export default function ProfileDashboardPage() {
           </div>
         </div>
 
-        {/* The Prop Dept Card */}
-        <div className="bg-[#07070d] border border-amber-500/30 rounded-3xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+        {/* The Prop Dept & 50-Tier Next Reward Preview Card */}
+        <div className="bg-[#07070d] border border-amber-500/30 rounded-3xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden space-y-4">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-amber-400">
-              <span>🎟️</span> Studio Commissary &amp; Backlot
+            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-amber-400">
+              <span>🎟️ Studio Pass &amp; Backlot</span>
+              <span className="text-cyan-300 font-bold">Tier {currentTierIndex} / 50</span>
             </div>
             <h3 className="text-lg font-bold text-white">
-              The Prop Department
+              Next Tier Unlock Preview
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed font-light">
-              Equip custom title badges, holographic critic foil, and expand your screening watchlist using Studio Coins.
+              {currentTierObj.actName} • Next milestone at {nextTierObj.requiredXp.toLocaleString()} XP:
             </p>
+            <div className="pt-1">
+              <RewardPictureCard
+                visualKey={nextTierObj.visualKey}
+                rewardType={nextTierObj.rewardType}
+                rarity={nextTierObj.rarity}
+                label={`Tier ${nextTierObj.tier}: ${nextTierObj.rewardLabel}`}
+                size="sm"
+              />
+            </div>
           </div>
 
-          <div className="pt-4 mt-2">
+          <div className="pt-2 space-y-2">
             <Link
               href="/armoury"
               className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-mono font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-95"
             >
-              <span>Visit Prop Dept</span>
+              <span>Visit Prop Dept &amp; Try-On</span>
               <span>↗</span>
+            </Link>
+            <Link
+              href="/quests"
+              className="w-full py-2 px-4 bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2"
+            >
+              <span>⚡ 50-Tier Pass, Wheel &amp; Vaults</span>
             </Link>
           </div>
         </div>
@@ -760,29 +911,27 @@ export default function ProfileDashboardPage() {
       {/* FEED DECK */}
       <div className="space-y-5">
         <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4">
-          <div className="flex items-center gap-2">
-            {[
-              { id: 'recommendations', label: '🎬 Watchlist Recommendations' },
-              { id: 'transmissions', label: `📡 Critic Reviews (${userReviews.length})` },
-              { id: 'vault', label: '🪙 Studio Kit & Equipment Locker' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
-                  activeTab === tab.id
-                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white border border-cyan-400/50 shadow-md shadow-cyan-600/30'
-                    : 'bg-[#080d1a] text-slate-400 hover:text-white border border-cyan-500/20'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <label htmlFor="profile-tab-select" className="text-xs font-mono text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+              <span>🗂️</span> Studio Station:
+            </label>
+            <select
+              id="profile-tab-select"
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value)}
+              className="bg-[#080d1a] border border-cyan-500/30 text-xs font-mono font-bold text-white rounded-xl px-4 py-2.5 outline-none focus:border-cyan-400 cursor-pointer shadow-inner transition-all"
+            >
+              <option value="recommendations" className="bg-[#080d1a] text-white">🎬 Watchlist Recommendations & Neural Affinity</option>
+              <option value="arena" className="bg-[#080d1a] text-white">⚔️ SceneCents Wager Arena (Bots & PvP)</option>
+              <option value="transmissions" className="bg-[#080d1a] text-white">📡 Critic Reviews Archive ({userReviews.length})</option>
+              <option value="vault" className="bg-[#080d1a] text-white">🪙 Studio Kit & Equipment Locker</option>
+            </select>
           </div>
 
-          <span className="text-xs font-mono text-cyan-400 hidden sm:inline-block">
+          <span className="text-xs font-mono text-cyan-400 hidden md:inline-block">
             {activeTab === 'recommendations' && '● Neural Affinity Matches'}
+            {activeTab === 'arena' && '● High-Stakes Cinephile Wagering'}
+            {activeTab === 'transmissions' && '● Published Film Critiques'}
             {activeTab === 'vault' && '● Active Production Equipment'}
           </span>
         </div>
@@ -799,59 +948,85 @@ export default function ProfileDashboardPage() {
               </div>
             ) : watchlistRecommendations.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {watchlistRecommendations.map((target) => (
-                  <div
-                    key={target.id}
-                    onClick={() => setSelectedMovieId(target.id)}
-                    className="bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-3 flex flex-col justify-between group transition-all duration-300 shadow-md hover:-translate-y-1 hover:shadow-[0_10px_25px_rgba(6,182,212,0.2)] cursor-pointer"
-                  >
-                    <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-[#141420] mb-2.5 border border-white/5">
-                      {target.posterPath ? (
-                        <Image
-                          src={`https://image.tmdb.org/t/p/w300${target.posterPath}`}
-                          alt={target.title}
-                          fill
-                          sizes="(max-width: 768px) 50vw, 25vw"
-                          className="object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-cyan-950/40 flex items-center justify-center text-[10px] font-mono text-cyan-400">
-                          NO POSTER
+                {watchlistRecommendations.map((target, idx) => {
+                  const isSaved = (watchlist || []).some(w => String(w.id) === String(target.id));
+                  const isSeries = target.media_type === 'tv';
+
+                  return (
+                    <div
+                      key={target.id}
+                      onClick={() => setSelectedMedia({ id: target.id, type: target.media_type })}
+                      className="bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-400 rounded-2xl p-3 flex flex-col justify-between group transition-all duration-300 shadow-md hover:-translate-y-1 hover:shadow-[0_10px_25px_rgba(6,182,212,0.2)] cursor-pointer"
+                    >
+                      <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-[#141420] mb-2.5 border border-white/5">
+                        {target.posterPath ? (
+                          <Image
+                            src={`https://image.tmdb.org/t/p/w300${target.posterPath}`}
+                            alt={target.title}
+                            fill
+                            unoptimized
+                            sizes="(max-width: 768px) 50vw, 25vw"
+                            priority={idx < 4}
+                            className="object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-cyan-950/40 flex items-center justify-center text-[10px] font-mono text-cyan-400">
+                            NO POSTER
+                          </div>
+                        )}
+                        
+                        {/* Format Chip */}
+                        <div className="absolute top-2 left-2 bg-black/90 text-cyan-300 border border-cyan-400/30 px-1.5 py-0.5 rounded text-[8px] font-mono font-bold uppercase backdrop-blur-md shadow-sm">
+                          {isSeries ? 'Series' : 'Movie'}
                         </div>
-                      )}
-                      
-                      <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-cyan-400/40 text-[9px] font-mono text-cyan-300 font-bold">
-                        {target.match} Match
+
+                        {/* Affinity Score */}
+                        <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-cyan-400/40 text-[9px] font-mono text-cyan-300 font-bold">
+                          {target.match} Match
+                        </div>
+
+                        {/* Anchor Attribution */}
+                        <div className="absolute bottom-2 left-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-emerald-400/30 text-[9px] font-mono text-emerald-300 truncate max-w-[85%]">
+                          {target.status}
+                        </div>
                       </div>
 
-                      <div className="absolute bottom-2 left-2 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-emerald-400/30 text-[9px] font-mono text-emerald-300 truncate max-w-[85%]">
-                        {target.status}
-                      </div>
-                    </div>
+                      <div className="px-1 space-y-2">
+                        <div>
+                          <h4 
+                            className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-1 leading-snug"
+                            title={target.title}
+                          >
+                            {target.title}
+                          </h4>
+                          <span className="text-[10px] font-mono text-slate-400 block mt-0.5">{target.year}</span>
+                        </div>
 
-                    <div className="px-1">
-                      <h4 
-                        className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-2 h-8 leading-snug"
-                        title={target.title}
-                      >
-                        {target.title}
-                      </h4>
-                      <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-slate-400">
-                        <span>{target.year}</span>
-                        <button 
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedMovieId(target.id);
-                          }}
-                          className="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
-                        >
-                          Film Intel →
-                        </button>
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
+                          <Link
+                            href={`/movie/${target.id}?type=${isSeries ? 'tv' : 'movie'}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-[10px] font-mono font-bold text-cyan-400 hover:text-cyan-300 uppercase tracking-wider"
+                          >
+                            {isSeries ? 'Series Page ↗' : 'Film Page ↗'}
+                          </Link>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleWatchlistCard(target, e)}
+                            className={`px-2.5 py-1 rounded-lg text-[9px] font-mono font-bold uppercase transition-all cursor-pointer border ${
+                              isSaved
+                                ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
+                                : 'bg-[#141420] text-slate-300 border-white/10 hover:border-cyan-400 hover:text-white'
+                            }`}
+                          >
+                            {isSaved ? '✓ Saved' : '+ List'}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="py-16 text-center border border-cyan-500/20 bg-[#07070d] rounded-2xl p-6">
@@ -929,17 +1104,17 @@ export default function ProfileDashboardPage() {
               </div>
             </div>
 
-            {/* Interactive Equipment Locker */}
+            {/* Interactive Equipment Locker with Reward Pictures */}
             <div className="bg-[#07070d] border border-cyan-500/25 rounded-3xl p-6 sm:p-7 space-y-5 shadow-xl">
               <div className="flex items-center justify-between border-b border-cyan-500/20 pb-4">
                 <div className="flex items-center gap-2">
                   <span className="text-base">🎬</span>
                   <h3 className="text-sm font-mono uppercase tracking-widest text-cyan-300 font-bold">
-                    Active Equipment Locker ({profileData.inventory.length} Props Unlocked)
+                    Visual Equipment Locker ({profileData.inventory.length} Props Unlocked)
                   </h3>
                 </div>
                 <span className="text-[10px] font-mono text-slate-400">
-                  Click to Equip / Unequip
+                  Click Equip to apply to your Dossier
                 </span>
               </div>
 
@@ -948,10 +1123,18 @@ export default function ProfileDashboardPage() {
                   {profileData.inventory.map((itemId) => {
                     const isFrame = itemId.startsWith('frame_');
                     const isTitle = itemId.startsWith('title_');
-                    const equipKey = isFrame ? 'equippedFrame' : isTitle ? 'equippedTitle' : null;
+                    const isTheme = itemId.startsWith('theme_');
+                    const equipKey = isFrame
+                      ? 'equippedFrame'
+                      : isTitle
+                        ? 'equippedTitle'
+                        : isTheme
+                          ? 'equippedTheme'
+                          : null;
                     const isEquipped = equipKey ? profileData[equipKey] === itemId : false;
 
-                    const formattedName = itemId
+                    const catalogItem = REWARD_VISUAL_CATALOG[itemId];
+                    const formattedName = catalogItem?.name || itemId
                       .replace(/^(frame_|title_|theme_)/, '')
                       .replace(/_/g, ' ')
                       .toUpperCase();
@@ -959,38 +1142,56 @@ export default function ProfileDashboardPage() {
                     return (
                       <div 
                         key={itemId}
-                        className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${
+                        className={`p-4 rounded-2xl border flex flex-col justify-between space-y-3 transition-all ${
                           isEquipped 
-                            ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.25)]' 
-                            : 'bg-[#050811] border-white/5 hover:border-white/20'
+                            ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.25)]' 
+                            : 'bg-[#050811] border-white/10 hover:border-cyan-400/50'
                         }`}
                       >
-                        <div className="space-y-1">
-                          <span className="text-xs font-bold text-white block">
-                            {isFrame ? `🎞️ ${formattedName} FRAME` : isTitle ? `🏷️ [${formattedName}]` : `⚡ ${formattedName}`}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400 block">
-                            {isFrame ? 'Avatar Film Reel Border' : isTitle ? 'Opening Screen Credit' : 'Studio Asset'}
-                          </span>
-                        </div>
+                        <RewardPictureCard
+                          visualKey={catalogItem ? itemId : 'coins_treasury'}
+                          rewardType={isFrame ? 'frame' : isTitle ? 'title' : isTheme ? 'theme' : 'prop'}
+                          rarity={catalogItem?.rarity || 'RARE'}
+                          label={formattedName}
+                          size="sm"
+                          isClaimed={!isEquipped}
+                          isEquipped={isEquipped}
+                        />
 
-                        {equipKey ? (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEquip(itemId, equipKey)}
-                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer ${
-                              isEquipped
-                                ? 'bg-cyan-500 text-black shadow-md hover:bg-cyan-400 font-black'
-                                : 'bg-white/5 border border-white/10 hover:border-cyan-400 text-slate-300'
-                            }`}
-                          >
-                            {isEquipped ? '✓ Equipped' : 'Equip'}
-                          </button>
-                        ) : (
-                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
-                            Active
-                          </span>
-                        )}
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="space-y-0.5 min-w-0 pr-2">
+                            <span className="text-xs font-bold text-white block truncate">
+                              {formattedName}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 block">
+                              {isFrame
+                                ? 'Avatar Film Reel Border'
+                                : isTitle
+                                  ? 'Opening Screen Credit'
+                                  : isTheme
+                                    ? 'Studio Color Grade Theme'
+                                    : 'Active Studio Prop'}
+                            </span>
+                          </div>
+
+                          {equipKey ? (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEquip(itemId, equipKey)}
+                              className={`px-3.5 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase transition-all cursor-pointer shrink-0 ${
+                                isEquipped
+                                  ? 'bg-cyan-500 text-black shadow-md hover:bg-cyan-400 font-black'
+                                  : 'bg-white/5 border border-white/10 hover:border-cyan-400 text-slate-300'
+                              }`}
+                            >
+                              {isEquipped ? '✓ Equipped' : 'Equip'}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg shrink-0">
+                              Active
+                            </span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1002,18 +1203,85 @@ export default function ProfileDashboardPage() {
               )}
             </div>
 
+            {/* 90-Day Career Mastery Trophy Shelf */}
+            <div className="bg-[#07070d] border border-fuchsia-500/30 rounded-3xl p-6 sm:p-7 space-y-5 shadow-xl">
+              <div className="flex items-center justify-between border-b border-fuchsia-500/20 pb-4 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-sm font-mono uppercase tracking-widest text-fuchsia-300 font-bold flex items-center gap-2">
+                    <span>🏆</span> 90-Day Career Mastery Trophy Case
+                  </h3>
+                  <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                    Multi-month progressive achievements across Watchlist Curation, Screenings, Ciphers &amp; Streaks
+                  </p>
+                </div>
+                <Link
+                  href="/quests"
+                  className="px-3.5 py-1.5 rounded-xl bg-fuchsia-500/20 border border-fuchsia-400/40 text-fuchsia-300 text-xs font-mono font-bold hover:bg-fuchsia-500/30"
+                >
+                  Claim Mastery Payouts ↗
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {CAREER_MASTERY_CAMPAIGNS.map((camp) => (
+                  <div
+                    key={camp.id}
+                    className="rounded-2xl border border-white/10 bg-[#090d1a] overflow-hidden flex flex-col justify-between"
+                  >
+                    <div className="relative h-28 w-full">
+                      <Image src={camp.image} alt={camp.title} fill unoptimized sizes="(max-width: 1024px) 50vw, 25vw" className="object-cover opacity-70" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#090d1a] via-transparent to-transparent" />
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 border border-fuchsia-400/40 text-[9px] font-mono text-fuchsia-300 font-bold">
+                        5-Stage Mastery
+                      </span>
+                      <span className="absolute bottom-2 left-2.5 text-lg">{camp.icon}</span>
+                    </div>
+                    <div className="p-3.5 space-y-1">
+                      <h4 className="text-xs font-bold text-white">{camp.title}</h4>
+                      <p className="text-[10px] font-mono text-amber-300">
+                        Max Rank: {camp.stages[camp.stages.length - 1].rank}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
+        )}
+
+        {/* TAB: SCENECENTS WAGER ARENA (PLAY VS BOTS & OTHER USERS) */}
+        {activeTab === 'arena' && (
+          <SceneCentsArena
+            user={user}
+            walletCoins={profileData.walletCoins}
+            xpMultiplier={1.25}
+            onBalanceUpdate={(deltaCoins, deltaXp) => {
+              setProfileData(prev => ({
+                ...prev,
+                walletCoins: Math.max(0, prev.walletCoins + deltaCoins),
+                userXp: prev.userXp + (deltaXp || 0)
+              }));
+            }}
+          />
         )}
 
       </div>
 
-      {/* Direct Modal Overlay */}
-      {selectedMovieId && (
-        <MovieModal
-          movieId={selectedMovieId}
-          onClose={() => setSelectedMovieId(null)}
+      {/* DUAL-MODAL ENGINE (TV + MOVIE COMPLIANT) */}
+      {selectedMedia?.type === 'tv' ? (
+        <TVModal
+          tvId={selectedMedia?.id}
+          showId={selectedMedia?.id}
+          onClose={() => setSelectedMedia(null)}
         />
-      )}
+      ) : selectedMedia?.id ? (
+        <MovieModal
+          movieId={selectedMedia?.id}
+          mediaType={selectedMedia?.type || 'movie'}
+          onClose={() => setSelectedMedia(null)}
+        />
+      ) : null}
 
     </div>
   );

@@ -1,27 +1,53 @@
-'use client';
+// File: app/error.jsx
+"use client";
 
-import { useEffect } from 'react';
+import { useEffect } from "react";
+import Link from "next/link";
 
-export default function Error({ error, reset }) {
+export default function ErrorBoundary({ error, reset }) {
   useEffect(() => {
-    console.error("Neural telemetry error intercepted:", error);
+    console.error("SceneSense boundary caught error:", error);
   }, [error]);
 
+  const errorMessage = error?.message || "Unexpected rendering or network interruption.";
+  const errorDigest = error?.digest ? `DIGEST: ${error.digest}` : "RUNTIME EXCEPTION";
+
   return (
-    <main className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6 text-center text-white">
-      <div className="max-w-md space-y-4 bg-[#101010] border border-red-900/50 p-8 rounded-2xl shadow-2xl">
-        <span className="text-3xl">⚠️</span>
-        <h2 className="text-lg font-black tracking-tight">Transmission Interrupted</h2>
-        <p className="text-xs text-gray-400 leading-relaxed">
-          An unexpected anomaly occurred within the SceneSense neural grid. Our diagnostic protocols have logged the event.
-        </p>
-        <button
-          onClick={() => reset()}
-          className="w-full py-3 bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-[0_0_15px_rgba(220,38,38,0.3)]"
-        >
-          Re-engage Telemetry Feed
-        </button>
+    <div className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-6 text-slate-100">
+      <div className="max-w-md w-full studio-panel rounded-3xl p-8 text-center space-y-6">
+        <div className="space-y-2">
+          <span className="inline-block px-3 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-[10px] font-mono font-semibold uppercase tracking-widest text-rose-300">
+            Studio Recovery
+          </span>
+          <h2 className="text-2xl font-bold tracking-tight text-white">
+            Something interrupted this scene
+          </h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            We logged the interruption so your watchlist and session stay safe. Retry below or return to the Discovery Studio.
+          </p>
+        </div>
+
+        <div className="bg-black/50 border border-white/10 rounded-xl p-3 text-left font-mono text-[11px] text-slate-400 overflow-hidden">
+          <div className="text-rose-300 font-semibold mb-0.5 truncate">{errorDigest}</div>
+          <div className="line-clamp-2 text-slate-500">{errorMessage}</div>
+        </div>
+
+        <div className="flex flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => reset()}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 text-xs font-bold uppercase tracking-wider hover:opacity-95 transition-opacity cursor-pointer"
+          >
+            Retry Current View
+          </button>
+          <Link
+            href="/"
+            className="w-full py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-slate-200 text-xs font-semibold uppercase tracking-wider transition-colors"
+          >
+            Return to Discover Studio
+          </Link>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }

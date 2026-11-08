@@ -1,17 +1,28 @@
 // File: components/VipBetaModal.jsx
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function VipBetaModal({ isOpen, onClose, user }) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   const handleClaimBetaDeal = async () => {
     if (!user) {
-      window.location.href = '/login';
+      router.push('/login');
       return;
     }
 
@@ -44,7 +55,7 @@ export default function VipBetaModal({ isOpen, onClose, user }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fadeIn font-sans">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fadeIn font-sans" role="dialog" aria-modal="true">
       <div className="relative w-full max-w-lg bg-[#0b1120] border-2 border-amber-400/70 rounded-3xl p-6 sm:p-8 shadow-[0_0_60px_rgba(245,158,11,0.25)] text-center space-y-6 overflow-hidden">
         
         {/* Ambient atmospheric glows */}
@@ -54,6 +65,7 @@ export default function VipBetaModal({ isOpen, onClose, user }) {
         {/* Dismiss trigger */}
         <button 
           onClick={onClose}
+          aria-label="Close VIP Modal"
           className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 border border-white/20 text-gray-400 hover:text-white flex items-center justify-center text-sm cursor-pointer transition-colors"
         >
           ✕
