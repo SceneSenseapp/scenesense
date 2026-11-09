@@ -13,10 +13,10 @@ export default function PersonDetailPage() {
   if (!id) return null;
 
   return (
-    <div className="min-h-screen bg-[#030307] py-6 px-4 flex items-center justify-center">
+    <div className="min-h-[calc(100vh-64px)] bg-[#030307] py-6 px-4 flex items-center justify-center">
       <ActorModal
         personId={id}
-        onClose={() => router.push('/where')}
+        onClose={() => router.back()}
         onSelectMovie={(movieId, mediaType = 'movie') => {
           router.push(`/movie/${movieId}?type=${mediaType}`);
         }}

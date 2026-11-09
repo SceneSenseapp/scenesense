@@ -1,42 +1,39 @@
-"use client";
-
-import { useRouter } from 'next/navigation';
-import Image from 'next/image';
+// File: app/not-found.jsx
+import Link from "next/link";
 
 export default function NotFound() {
-  const router = useRouter();
-
   return (
-    <div className="min-h-screen bg-[#050505] flex items-center justify-center relative overflow-hidden font-sans">
-      {/* Cinematic Background Blur */}
-      <div className="absolute inset-0 z-0 opacity-20">
-        <Image 
-          src="https://image.tmdb.org/t/p/original/8rpDcsfLJypbO6vtec021c322ce.jpg" // High-res cinematic backdrop (e.g., Blade Runner)
-          alt="404 Background"
-          fill
-          className="object-cover blur-sm"
-          priority
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent"></div>
-      </div>
+    <div className="min-h-[calc(100vh-64px)] w-full flex items-center justify-center p-6 text-slate-100">
+      <div className="max-w-md w-full studio-panel rounded-3xl p-8 text-center space-y-6">
+        <div className="space-y-2">
+          <span className="inline-block px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[10px] font-mono font-semibold uppercase tracking-widest text-cyan-300">
+            Reel 404 • Missing Frame
+          </span>
+          <h1 className="text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-emerald-300 pt-1">
+            404
+          </h1>
+          <h2 className="text-xl font-bold text-white">
+            Page Not Found
+          </h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            The route or title dossier you requested could not be found in the SceneSense archive.
+          </p>
+        </div>
 
-      <div className="relative z-10 text-center space-y-6 p-8 border border-white/10 bg-black/40 backdrop-blur-md rounded-2xl shadow-[0_0_50px_rgba(220,38,38,0.15)] max-w-md w-full mx-4">
-        <h1 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-br from-red-500 to-red-800 drop-shadow-lg">
-          404
-        </h1>
-        <h2 className="text-xl font-bold text-white tracking-wide">
-          Transmission Lost
-        </h2>
-        <p className="text-sm text-gray-400 font-medium">
-          Commander, the signal to this cinematic sector has been severed. The coordinates you provided do not exist in our logs.
-        </p>
-        
-        <button 
-          onClick={() => router.push('/')}
-          className="w-full mt-4 py-3 bg-red-600/20 hover:bg-red-600/40 border border-red-500/50 text-red-100 text-xs font-bold uppercase tracking-widest rounded-lg transition-all duration-300 hover:shadow-[0_0_20px_rgba(220,38,38,0.4)] cursor-pointer"
-        >
-          Return to Base
-        </button>
+        <div className="flex flex-col gap-2.5">
+          <Link
+            href="/"
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 text-xs font-bold uppercase tracking-wider hover:opacity-95 transition-opacity"
+          >
+            Open Discover Studio
+          </Link>
+          <Link
+            href="/where-to-watch"
+            className="w-full py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-slate-200 text-xs font-semibold uppercase tracking-wider transition-colors"
+          >
+            Browse Streaming Radar
+          </Link>
+        </div>
       </div>
     </div>
   );

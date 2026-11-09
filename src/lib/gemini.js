@@ -1,28 +1,30 @@
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// File: src/lib/gemini.js
+import { GEMINI_MODELS, generateWithCascade } from "@/lib/server/ai-gateway";
 
 export const MODELS = {
-  FAST: "gemini-2.5-flash",   // Cost-effective beta user tier
-  POWER: "gemini-2.5-pro",    // Heavy reasoning tier
+  FAST: GEMINI_MODELS.PRIMARY,
+  LITE: GEMINI_MODELS.FAST_FALLBACK,
+  POWER: GEMINI_MODELS.REASONING,
 };
 
 export async function generateSceneResponse({ prompt, usePro = false } = {}) {
   const selectedModel = usePro ? MODELS.POWER : MODELS.FAST;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: selectedModel,
-      contents: prompt,
-    });
+  const res = await generateWithCascade({
+    contents: prompt,
+    models: [
+      { name: selectedModel, timeoutMs: 28000 },
+      { name: MODELS.LITE, timeoutMs: 16000 },
+    ],
+  });
 
-    return {
-      success: true,
-      text: response.text,
-      modelUsed: selectedModel,
-    };
-  } catch (error) {
-    console.error(`Error generating content with ${selectedModel}:`, error);
-    return { success: false, error: error.message || "Unknown error" };
+  if (!res.success) {
+    return { success: false, error: res.error || "Unknown error" };
   }
+
+  return {
+    success: true,
+    text: res.text,
+    modelUsed: res.modelUsed,
+  };
 }

@@ -1,96 +1,187 @@
-// app/api/reviews/seed/route.js
-import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/firebase';
+// File: app/api/review/seed/route.js
+import { NextResponse } from "next/server";
+import { getAdminServices, FieldValue } from "@/lib/server/firebase-admin";
+import {
+  generateWithCascade,
+  safeParseJson,
+  resolveGeminiApiKey,
+} from "@/lib/server/ai-gateway";
+import { resolveTmdbCredentials } from "@/lib/movie-apis";
 
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || process.env.TMDB_API_KEY;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const SEED_TARGETS = [
-  { title: "Dumb and Dumber", year: "1994", persona: "The Cine-Maniac", tag: "CineManiac_AI" },
-  { title: "Blade Runner 2049", year: "2017", persona: "The Sci-Fi Mastermind", tag: "SciFi_Mastermind" },
-  { title: "Oppenheimer", year: "2023", persona: "The Director", tag: "Auteur_Director" },
-  { title: "Hereditary", year: "2018", persona: "The Horror Archivist", tag: "Horror_Archivist" },
-  { title: "Spider-Man: Across the Spider-Verse", year: "2023", persona: "The Animation Artisan", tag: "Animation_Artisan" },
-  { title: "Chinatown", year: "1974", persona: "The True Crime Detective", tag: "Noir_Detective" }
+  {
+    title: "Dumb and Dumber",
+    year: "1994",
+    persona: "The Cine-Maniac",
+    tag: "CineManiac_AI",
+    role: "Cult Connoisseur",
+    frame: "frame_neon_cyan",
+  },
+  {
+    title: "Blade Runner 2049",
+    year: "2017",
+    persona: "The Sci-Fi Mastermind",
+    tag: "SciFi_Mastermind",
+    role: "Synthetics Archivist",
+    frame: "frame_solar_gold",
+  },
+  {
+    title: "Oppenheimer",
+    year: "2023",
+    persona: "The Director",
+    tag: "Auteur_Director",
+    role: "Auteur Visionary",
+    frame: "frame_matrix_emerald",
+  },
+  {
+    title: "Hereditary",
+    year: "2018",
+    persona: "The Horror Archivist",
+    tag: "Horror_Archivist",
+    role: "Macabre Specialist",
+    frame: "frame_blood_cinema",
+  },
+  {
+    title: "Spider-Man: Across the Spider-Verse",
+    year: "2023",
+    persona: "The Animation Artisan",
+    tag: "Animation_Artisan",
+    role: "Visual Stylist",
+    frame: "frame_neon_cyan",
+  },
+  {
+    title: "Chinatown",
+    year: "1974",
+    persona: "The True Crime Detective",
+    tag: "Noir_Detective",
+    role: "Nocturnal Operative",
+    frame: "frame_monochrome_noir",
+  },
 ];
 
 export async function POST(req) {
   try {
-    const apiKey = 
-      process.env.GEMINI_API_KEY || 
-      process.env.GOOGLE_GENAI_API_KEY || 
-      process.env.GOOGLE_API_KEY || 
-      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    // 1. Strict authorization check — closed unless ADMIN_SEED_SECRET or ADMIN_SECRET_KEY is configured and matches
+    const { searchParams } = new URL(req.url);
+    const secret =
+      searchParams.get("secret") || req.headers.get("x-admin-secret");
+    const expectedSecret =
+      process.env.ADMIN_SEED_SECRET || process.env.ADMIN_SECRET_KEY;
 
-    if (!apiKey) {
-      return NextResponse.json({ error: "Missing Gemini API key" }, { status: 500 });
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-    const inserted = [];
-
-    for (const target of SEED_TARGETS) {
-      // 1. Fetch official TMDB details
-      const searchRes = await fetch(
-        `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(target.title)}&primary_release_year=${target.year}`
+    if (!expectedSecret || !secret || secret !== expectedSecret) {
+      return NextResponse.json(
+        { error: "Forbidden. Admin seed secret is not configured or invalid." },
+        { status: 403 }
       );
-      const tmdbData = await searchRes.json();
-      const movie = tmdbData.results?.[0];
-
-      if (!movie) continue;
-
-      // 2. Generate persona review
-      const prompt = `
-You are the AI persona "${target.persona}" on SceneSense Studio.
-Write a sharp, authentic, and charismatic movie review (between 3 to 5 sentences) for the film "${movie.title}" (${target.year}).
-Include specific cinematic details (pacing, cinematography, performances, or thematic depth) matching your unique personality.
-
-Return strictly a raw JSON object:
-{
-  "rating": 4.5,
-  "reviewText": "Your review text here."
-}
-`;
-
-      const aiResponse = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.8
-        }
-      });
-
-      const parsed = JSON.parse(aiResponse.text.trim());
-
-      // 3. Write directly into Firestore reviews collection
-      const docData = {
-        userId: `bot_${target.tag.toLowerCase()}`,
-        userEmail: `${target.tag.toLowerCase()}@scenesense.ai`,
-        movieId: movie.id,
-        movieTitle: movie.title,
-        posterPath: movie.poster_path || "",
-        releaseYear: (movie.release_date || target.year).slice(0, 4),
-        rating: Number(parsed.rating) || 5,
-        reviewText: parsed.reviewText.trim(),
-        createdAt: serverTimestamp(),
-        likesCount: Math.floor(Math.random() * 18) + 4,
-        isBotTransmission: true
-      };
-
-      const docRef = await addDoc(collection(db, 'reviews'), docData);
-      inserted.push({ id: docRef.id, ...docData });
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      count: inserted.length, 
-      transmissions: inserted 
+    if (!resolveGeminiApiKey()) {
+      return NextResponse.json(
+        { error: "Missing GEMINI_API_KEY in server environment." },
+        { status: 500 }
+      );
+    }
+
+    const { db } = getAdminServices();
+    if (!db) {
+      return NextResponse.json(
+        { error: "Firestore Admin service unavailable." },
+        { status: 503 }
+      );
+    }
+
+    const { apiKey: tmdbKey, bearerToken } = resolveTmdbCredentials();
+
+    const seedOperations = SEED_TARGETS.map(async (target) => {
+      try {
+        const searchUrl = new URL("https://api.themoviedb.org/3/search/movie");
+        if (tmdbKey && !bearerToken) {
+          searchUrl.searchParams.set("api_key", tmdbKey);
+        }
+        searchUrl.searchParams.set("query", target.title);
+        searchUrl.searchParams.set("primary_release_year", target.year);
+        searchUrl.searchParams.set("language", "en-US");
+
+        const searchRes = await fetch(searchUrl.toString(), {
+          headers: bearerToken
+            ? { Authorization: `Bearer ${bearerToken}` }
+            : undefined,
+          next: { revalidate: 86400 },
+        });
+
+        if (!searchRes.ok) return null;
+        const tmdbData = await searchRes.json();
+        const movie = tmdbData.results?.[0];
+        if (!movie) return null;
+
+        const systemInstruction = `You are the authentic AI persona "${target.persona}" on SceneSense Studio (scenesense.app).
+Write a charismatic, sharp film critique (3-4 sentences) for "${movie.title}" (${target.year}).
+Focus on cinematography, thematic atmosphere, pacing, or standout performances matching your persona.
+Return strictly a valid JSON object with keys "rating" (number out of 5) and "reviewText".`;
+
+        const prompt = `Critique Target: "${movie.title}" (${target.year})\nOverview: "${movie.overview || ""}"`;
+
+        const aiRes = await generateWithCascade({
+          contents: prompt,
+          systemInstruction,
+          responseMimeType: "application/json",
+          temperature: 0.75,
+        });
+
+        const parsed = safeParseJson(aiRes.text) || {
+          rating: 4.5,
+          reviewText:
+            "A masterfully crafted piece of cinema that commands total visual and emotional engagement.",
+        };
+
+        const docData = {
+          userId: `bot_${target.tag.toLowerCase()}`,
+          userName: target.persona,
+          userEmail: `${target.tag.toLowerCase()}@scenesense.app`,
+          movieId: movie.id,
+          movieTitle: movie.title,
+          posterPath: movie.poster_path || "",
+          backdropPath: movie.backdrop_path || "",
+          releaseYear: (movie.release_date || target.year).slice(0, 4),
+          rating: Number(parsed.rating) || 4.5,
+          reviewText: String(
+            parsed.reviewText ||
+              parsed.review ||
+              "Exemplary execution of the medium."
+          ).trim(),
+          equippedFrame: target.frame,
+          equippedTitle: target.role,
+          likesCount: Math.floor(Math.random() * 24) + 6,
+          isBotTransmission: true,
+          createdAt: FieldValue.serverTimestamp(),
+        };
+
+        const docRef = await db.collection("reviews").add(docData);
+        return { id: docRef.id, ...docData };
+      } catch (targetErr) {
+        console.warn(`Seed failure for "${target.title}":`, targetErr.message);
+        return null;
+      }
     });
 
+    const results = await Promise.allSettled(seedOperations);
+    const inserted = results
+      .filter((r) => r.status === "fulfilled" && r.value !== null)
+      .map((r) => r.value);
+
+    return NextResponse.json({
+      success: true,
+      count: inserted.length,
+      transmissions: inserted,
+    });
   } catch (error) {
     console.error("Bot review generation error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message || "Review seed engine error" },
+      { status: 500 }
+    );
   }
 }
