@@ -1,36 +1,50 @@
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
 export async function POST(req) {
-  const { title } = await req.json();
+  try {
+    const { title } = await req.json().catch(() => ({}));
 
-  const prompt = `
-Find where the movie or show "${title}" is currently streaming.
-Return results in this format:
+    if (!title) {
+      return NextResponse.json({ error: "Title is required." }, { status: 400 });
+    }
 
-- Platform name
-- Subscription or rental
-- Region availability
+    const apiKey = 
+      process.env.GEMINI_API_KEY || 
+      process.env.GOOGLE_GENAI_API_KEY || 
+      process.env.GOOGLE_API_KEY || 
+      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return NextResponse.json({ 
+        reply: "Streaming intelligence is temporarily unavailable (Missing API key)." 
+      }, { status: 500 });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `
+Find where the movie or show "${title}" is currently streaming legally.
+Provide a clean, bulleted breakdown:
+- Platform name (e.g., Netflix, Prime Video, Disney+, Apple TV)
+- Access type (Subscription, Rental, Purchase, Free with Ads)
+- Region availability (e.g., US, Canada, UK, Global)
+Keep the answer concise and direct.
 `;
 
-  const res = await fetch(
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=YOUR_API_KEY",
-  {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: prompt }
-          ]
-        }
-      ]
-    })
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: prompt,
+      tools: [{ googleSearch: {} }],
+    });
+
+    const reply = response.text || "No streaming info found.";
+
+    return NextResponse.json({ reply });
+  } catch (error) {
+    console.error("Where to watch search error:", error);
+    return NextResponse.json({ 
+      reply: "Unable to retrieve live streaming availability at this moment." 
+    }, { status: 500 });
   }
-);
-
-  const data = await res.json();
-  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "No streaming info found.";
-
-  return NextResponse.json({ reply });
 }

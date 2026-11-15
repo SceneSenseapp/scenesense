@@ -2,7 +2,12 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextResponse } from 'next/server';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey = 
+  process.env.GEMINI_API_KEY || 
+  process.env.GOOGLE_GENAI_API_KEY || 
+  process.env.GOOGLE_API_KEY || 
+  process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export async function POST(req) {
@@ -26,7 +31,7 @@ export async function POST(req) {
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: `Find current local theater showtimes, theater names, and booking links for the movie "${title}" near ${location}. Format the response clearly with cinema names, showtimes, and booking details. If there are no current showtimes found, state explicitly: "No showtimes found."`,
       tools: [{ googleSearch: {} }],
     });

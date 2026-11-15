@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -19,7 +23,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": [
+        "./*"
+      ]
     },
     "types": [
       "node"
@@ -30,8 +36,17 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
-, "app/api/movie/[id]/route.js", "app/api/actor/[id]/route.js", "components/MovieCard.jsx", "hooks/useWatchlist.js", "--template/next.config.js", "prisma.config.js", "playwright.config.js", "--template/next-env.d.js", ".next/types/cache-life.d.js"  ],
-  "exclude": ["node_modules"]
+    "**/*.mts",
+    "app/api/movie/[id]/route.js",
+    "app/api/actor/[id]/route.js",
+    "components/MovieCard.jsx",
+    "hooks/useWatchlist.js",
+    "prisma.config.js",
+    "playwright.config.js",
+    ".next/types/cache-life.d.js",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
