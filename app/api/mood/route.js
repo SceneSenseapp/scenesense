@@ -49,7 +49,11 @@ export async function POST(req) {
     }
 
     // Resolve API key safely
-    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const apiKey = 
+      process.env.GEMINI_API_KEY || 
+      process.env.GOOGLE_GENAI_API_KEY || 
+      process.env.GOOGLE_API_KEY || 
+      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     
     // If key is missing in production environment, return archive match immediately
     if (!apiKey) {
@@ -107,7 +111,7 @@ You MUST respond strictly with a valid JSON object matching this schema:
     );
 
     const generatePromise = ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.8-flash",
       contents,
       config: {
         systemInstruction,

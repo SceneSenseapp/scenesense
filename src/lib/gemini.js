@@ -1,14 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const apiKey = 
+  process.env.GEMINI_API_KEY || 
+  process.env.GOOGLE_GENAI_API_KEY || 
+  process.env.GOOGLE_API_KEY || 
+  process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const MODELS = {
-  FAST: "gemini-2.5-flash",   // Cost-effective beta user tier
-  POWER: "gemini-2.5-pro",    // Heavy reasoning tier
+  FAST: "gemini-3.8-flash",   // Default high-efficiency, fast response tier
+  POWER: "gemini-4-carbon",   // Frontier reasoning tier
 };
 
 export async function generateSceneResponse({ prompt, usePro = false } = {}) {
   const selectedModel = usePro ? MODELS.POWER : MODELS.FAST;
+
+  if (!ai) {
+    console.error("Gemini API key is not configured in environment.");
+    return { success: false, error: "Missing Gemini API key" };
+  }
 
   try {
     const response = await ai.models.generateContent({

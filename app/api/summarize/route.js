@@ -1,24 +1,27 @@
 // File: app/api/summarize/route.js
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
-const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+const apiKey = 
+  process.env.GEMINI_API_KEY || 
+  process.env.GOOGLE_GENAI_API_KEY || 
+  process.env.GOOGLE_API_KEY || 
+  process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
 export async function POST(request) {
   try {
-    const { threadText, type = 'summary', channelName = 'general-cinema' } = await request.json();
+    const { threadText, type = 'summary', channelName = 'general-cinema' } = await request.json().catch(() => ({}));
 
     if (!threadText || !threadText.trim()) {
       return NextResponse.json({ error: 'Thread text payload is empty.' }, { status: 400 });
     }
 
     if (!apiKey) {
-      console.error("AI Error: GEMINI_API_KEY or GOOGLE_API_KEY missing from environment.");
+      console.error("AI Error: GEMINI_API_KEY missing from environment.");
       return NextResponse.json({ error: 'Mainframe AI key is not configured.' }, { status: 500 });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
+    const ai = new GoogleGenAI({ apiKey });
 
     // Archetype 1: The Auteur (Script Doctor) vs. Archetype 2: The Studio Bureaucrat (DirectorBot)
     const prompt = type === 'script_doctor'
@@ -39,8 +42,15 @@ Sign off curtly: "Per Legal & Executive Oversight: We hope you enjoy the platfor
 Thread to summarize:
 ${threadText}`;
     
-    const result = await model.generateContent(prompt);
-    const summary = result.response.text();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: prompt,
+      config: {
+        temperature: 0.7,
+      }
+    });
+
+    const summary = response.text || "Transmission resolved.";
 
     return NextResponse.json({ success: true, summary });
   } catch (error) {

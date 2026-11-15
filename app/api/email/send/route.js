@@ -38,11 +38,15 @@ export async function POST(request) {
     `;
 
     const aiResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      }
     });
 
-    const analysis = JSON.parse(aiResponse.text.trim());
+    const cleanText = aiResponse.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const analysis = JSON.parse(cleanText);
 
     // 2. Send the AI Auto-Reply back to the user via Resend
     await resend.emails.send({
